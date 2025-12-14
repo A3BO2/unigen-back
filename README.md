@@ -82,7 +82,7 @@ OPENAI_API_KEY=
 
 ### 4. 데이터베이스 세팅 (MariaDB)
 
-MariaDB 워크벤치(HeidiSQL)에서 `init_schema.sql`을 복사 붙여넣기 후후 실행하여 **기본 데이터베이스와 테이블**을 생성하세요.
+MariaDB 워크벤치(HeidiSQL)에서 `init_schema.sql`을 복사 붙여넣기 후 실행하여 **기본 데이터베이스와 테이블**을 생성하세요.
 
 
 
