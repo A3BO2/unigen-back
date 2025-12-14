@@ -280,6 +280,7 @@ ES Modules(`import` 문)을 사용할 때 **반드시 파일 확장자(.mjs)를 
 * **브랜치 예시:** `feature/kdy/upload-post`,
 
 * 앞에 붙이는 표준 키워드 (Type)
+
 | 키워드 | 설명 | 예시 |
 | :--- | :--- | :--- |
 | **feature** | 새로운 기능 개발 (가장 많이 씀) | `feature/kim/chat-ui` |
