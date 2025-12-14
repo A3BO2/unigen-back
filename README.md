@@ -279,7 +279,7 @@ ES Modules(`import` 문)을 사용할 때 **반드시 파일 확장자(.mjs)를 
 * 본인의 기능(Feature) 브랜치를 따서 작업 후 **PR(Pull Request)**을 보냅니다.
 * **브랜치 예시:** `feature/kdy/upload-post`,
 
-* 앞에 붙이는 표준 키워드 (Type)
+### 앞에 붙이는 표준 키워드 (Type)
 
 | 키워드 | 설명 | 예시 |
 | :--- | :--- | :--- |
