@@ -289,6 +289,7 @@ ES Modules(`import` 문)을 사용할 때 **반드시 파일 확장자(.mjs)를 
 | **refactor** | 코드 리팩토링 (기능 변경 없이 코드 개선) | `refactor/choi/db-query` |
 | **test** | 테스트 코드 추가 | `test/lee/user-test` |
 | **chore** | 빌드 설정, 패키지 매니저 설정 등 자잘한 작업 | `chore/kim/npm-update` |
+
 ---
 
 ## 👨‍💻 담당 업무 (R&R - Roles and Responsibilities)
