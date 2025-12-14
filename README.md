@@ -275,10 +275,20 @@ ES Modules(`import` 문)을 사용할 때 **반드시 파일 확장자(.mjs)를 
 
 * `main` 브랜치에는 **직접 Push 하지 않습니다.**
 * branch 만드는 방법
-    * `git switch -c [새로운 브랜치명(ex. feature/kdy)]`
+    * `git switch -c [새로운 브랜치명(ex. feature/kdy/upload-post)]`
 * 본인의 기능(Feature) 브랜치를 따서 작업 후 **PR(Pull Request)**을 보냅니다.
-* **브랜치 예시:** `feature/kdy`,
+* **브랜치 예시:** `feature/kdy/upload-post`,
 
+* 앞에 붙이는 표준 키워드 (Type)
+| 키워드 | 설명 | 예시 |
+| :--- | :--- | :--- |
+| **feature** | 새로운 기능 개발 (가장 많이 씀) | `feature/kim/chat-ui` |
+| **fix** | 버그 수정 | `fix/lee/login-error` |
+| **docs** | 문서 수정 (README 등) | `docs/park/readme-update` |
+| **style** | 코드 포맷팅, 세미콜론 누락 등 (로직 변경 X) | `style/kim/indent-fix` |
+| **refactor** | 코드 리팩토링 (기능 변경 없이 코드 개선) | `refactor/choi/db-query` |
+| **test** | 테스트 코드 추가 | `test/lee/user-test` |
+| **chore** | 빌드 설정, 패키지 매니저 설정 등 자잘한 작업 | `chore/kim/npm-update` |
 ---
 
 ## 👨‍💻 담당 업무 (R&R - Roles and Responsibilities)
