@@ -275,7 +275,7 @@ ES Modules(`import` 문)을 사용할 때 **반드시 파일 확장자(.mjs)를 
 
 * `main` 브랜치에는 **직접 Push 하지 않습니다.**
 * branch 만드는 방법
-    * git switch -c [새로운 브랜치명(ex. feature/kdy)] 
+    * `git switch -c [새로운 브랜치명(ex. feature/kdy)]`
 * 본인의 기능(Feature) 브랜치를 따서 작업 후 **PR(Pull Request)**을 보냅니다.
 * **브랜치 예시:** `feature/kdy`,
 
