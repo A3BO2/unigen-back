@@ -7,49 +7,80 @@ import path from "path";
 
 // F004: 일반 게시물 작성
 export const createPost = async (req, res) => {
+  const connection = await db.getConnection();
+
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: "이미지 파일이 필요합니다." });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: "최소 1장의 파일이 필요합니다." });
     }
+    // 트랜잭션 시작
+    await connection.beginTransaction();
 
     const { content, postType, isSeniorMode } = req.body;
     const authorId = 2; // 임시
 
-    // 이미지 압축
-    const originalFilePath = req.file.path;
+    const sql = `INSERT INTO posts 
+      (author_id, content, post_type, is_senior_mode) 
+      VALUES (?, ?, ?, ?)
+    `;
 
-    const optimizedFilename = `opt_${req.file.filename}`;
-    const optimizedFilePath = path.join(
-      req.file.destination,
-      optimizedFilename
-    );
-
-    // sharp 실행(1080px로 리사이징, 품질 80%로 압축)
-    await sharp(originalFilePath)
-      .resize({ width: 1080 }) // sns 표준너비
-      .withMetadata() // 사진의 방향 정보 유지
-      .jpeg({ quality: 80 }) // 화질 80%로 압축
-      .toFile(optimizedFilePath); // 저장
-
-    await fs.unlink(originalFilePath); // 원본 파일 삭제
-
-    const imageUrl = `/uploads/${optimizedFilename}`;
-
-    const sql = `INSERT INTO posts (author_id, content, image_url, post_type, is_senior_mode) VALUES (?, ?, ?, ?, ?)`;
-    const params = [authorId, content, imageUrl, isSeniorMode || false];
-
-    const [result] = await db.execute(sql, [
+    const [result] = await connection.execute(sql, [
       authorId,
       content,
-      imageUrl,
       postType || "feed",
-      isSeniorMode === "true" ? 1 : 0, // 'true' 문자열을 1/0으로 변환
+      isSeniorMode === "true" ? 1 : 0,
     ]);
-    res
-      .status(201)
-      .json({ message: "게시물 작성 성공", postId: result.insertId });
+
+    const newPostId = result.insertId;
+
+    // 이미지 반복 처리
+    const imagePromises = req.files.map(async (file, index) => {
+      // 이미지 압축
+      const originalFilePath = file.path;
+      const optimizedFilename = `opt_${file.filename}`;
+      const optimizedFilePath = path.join(file.destination, optimizedFilename);
+      const dbImageUrl = `/uploads/${optimizedFilename}`;
+
+      await sharp(originalFilePath)
+        .resize({ width: 1080 })
+        .jpeg({ quality: 80 })
+        .toFile(optimizedFilePath);
+
+      // 원본 삭제
+      await fs.unlink(originalFilePath);
+
+      // db 저장 쿼리
+      await connection.execute(
+        `INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)`,
+        [newPostId, dbImageUrl, index]
+      );
+
+      return dbImageUrl;
+    });
+
+    const savedImageUrls = await Promise.all(imagePromises);
+
+    // posts 테이블의 대표 이미지 업데이트(첫 번째 사진)
+    if (savedImageUrls.length > 0) {
+      await connection.execute(`UPDATE posts SET image_url = ? WHERE id = ?`, [
+        savedImageUrls[0],
+        newPostId,
+      ]);
+    }
+
+    await connection.commit();
+
+    res.status(201).json({
+      message: "게시글 등록 성공",
+      postId: newPostId,
+      images: savedImageUrls,
+    });
   } catch (error) {
+    // 에러 시 롤백
+    await connection.rollback();
     console.error(error);
     res.status(500).json({ message: "서버 오류" });
+  } finally {
+    connection.release();
   }
 };
