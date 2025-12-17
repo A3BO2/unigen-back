@@ -21,7 +21,7 @@ export const createPost = async (req, res) => {
 };
 
 // https://api.seniorsns.com/api/v1/posts/feed?mode=senior&page=1&size=10
-export const getPost = async (req, res) => {
+export const getFeed = async (req, res) => {
   try {
     const userId = 1; // 임시 ID
     const mode = req.query.mode || "all";
@@ -46,7 +46,7 @@ export const getPost = async (req, res) => {
         u.profile_image_url as authorProfileImageUrl
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
-      WHERE p.deleted_at IS NULL
+      WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
     `;
 
     const params = [];
