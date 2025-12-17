@@ -16,8 +16,15 @@ export const createPost = async (req, res) => {
     // 트랜잭션 시작
     await connection.beginTransaction();
 
+    const authorId = req.user.userId;
+
+    if (!authorId) {
+      return res
+        .status(401)
+        .json({ message: "로그인 정보가 유효하지 않습니다." });
+    }
+
     const { content, postType, isSeniorMode } = req.body;
-    const authorId = 2; // 임시
 
     const sql = `INSERT INTO posts 
       (author_id, content, post_type, is_senior_mode) 
