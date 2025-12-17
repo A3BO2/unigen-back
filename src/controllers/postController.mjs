@@ -43,7 +43,7 @@ export const getFeed = async (req, res) => {
         p.created_at as createdAt,
         u.id as authorId,
         u.name as authorName,
-        u.profile_image_url as authorProfileImageUrl
+        u.profile_image as authorProfileImageUrl
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
