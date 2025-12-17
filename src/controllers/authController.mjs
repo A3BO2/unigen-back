@@ -123,11 +123,10 @@ export const signup = async (req, res) => {
 };
 
 export const login = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { phone, password } = req.body;
     // 1. 사용자 찾기
-    const [[user]] = await connection.query(
+    const [[user]] = await db.query(
       "SELECT * FROM users WHERE phone = ? AND status = 'active'",
       [phone]
     );
@@ -166,8 +165,8 @@ export const login = async (req, res) => {
           username: user.username,
           name: user.name,
         },
-        tokens: token,
       },
+      token: token,
     });
   } catch (err) {
     console.error(err);
