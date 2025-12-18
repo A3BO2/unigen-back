@@ -10,6 +10,6 @@ const router = express.Router();
 router.post("/", verifyToken, upload.array("images", 10), createPost);
 
 // https://api.seniorsns.com/api/v1/posts/feed?mode=senior&page=1&size=10
-router.get("/feed", getFeed);
+router.get("/feed", verifyToken, getFeed);
 
 export default router;

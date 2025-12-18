@@ -95,7 +95,7 @@ export const createPost = async (req, res) => {
 // https://api.seniorsns.com/api/v1/posts/feed?mode=senior&page=1&size=10
 export const getFeed = async (req, res) => {
   try {
-    const userId = 1; // 임시 ID
+    const userId = req.user.userId || 1; // 요청한 사용자 ID (없으면 임시 1)
     const mode = req.query.mode || "all";
     const page = parseInt(req.query.page) || 1;
     const size = parseInt(req.query.size) || 10;
@@ -118,10 +118,11 @@ export const getFeed = async (req, res) => {
         u.profile_image as authorProfileImageUrl
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
+      INNER JOIN user_follows uf ON uf.followee_id = ? AND uf.follower_id = u.id
       WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
     `;
 
-    const params = [];
+    const params = [userId];
 
     if (mode === "senior") {
       // 시니어 모드일때 게시물
