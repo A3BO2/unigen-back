@@ -95,7 +95,7 @@ export const createPost = async (req, res) => {
 // https://api.seniorsns.com/api/v1/posts/feed?mode=senior&page=1&size=10
 export const getFeed = async (req, res) => {
   try {
-    const userId = req.user.userId || 1; // 요청한 사용자 ID (없으면 임시 1)
+    const userId = req.user.userId;
     const mode = req.query.mode || "all";
     const page = parseInt(req.query.page) || 1;
     const size = parseInt(req.query.size) || 10;
@@ -170,3 +170,5 @@ export const getFeed = async (req, res) => {
     res.status(500).json({ message: "서버 오류" });
   }
 };
+
+// F010: 탐색 게시물 조회
