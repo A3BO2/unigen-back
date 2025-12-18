@@ -1,6 +1,6 @@
 // 게시물 라우터
-import express from "express";
-import { createPost, getFeed } from "../controllers/postController.mjs";
+import express from 'express';
+import { createPost, getReel, getFeed } from '../controllers/postController.mjs';
 import { upload } from "../middleware/uploadMiddleware.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
 
@@ -13,5 +13,7 @@ router.post("/", verifyToken, upload.array("images", 10), createPost);
 router.get("/feed", verifyToken, getFeed);
 
 router.get("/explore", getExplorePosts);
+
+router.get('/reels', getReel);
 
 export default router;
