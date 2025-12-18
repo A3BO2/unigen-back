@@ -27,8 +27,8 @@ export const getReel = async (req, res) => {
       : Number.MAX_SAFE_INTEGER;
 
     const sql = `
-      SELECT id, user_id, content, image_url, video_url, is_senior_mode, created_at
-      FROM Posts
+      SELECT id, author_id, content, image_url, video_url, is_senior_mode, created_at
+      FROM posts
       WHERE post_type = ?
         AND id < ?
       ORDER BY id DESC
