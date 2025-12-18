@@ -4,7 +4,25 @@ import db from "../config/db.mjs";
 
 export const getUserProfile = async (req, res) => {
   try {
-    const userId = req.params.id; // 사용자 ID를 URL 파라미터에서 가져옴
+    // 사용자 ID: 인증 토큰(req.user.id)에서 우선 가져오고, 없으면 URL 파라미터(req.params.id)를 사용
+    // (인증 미들웨어가 `req.user`에 id를 주입해야 함)
+    let userId = null;
+    if (req.user && req.user.id) {
+      userId = req.user.id;
+    } else if (req.params && req.params.id) {
+      userId = req.params.id;
+    } else {
+      return res
+        .status(400)
+        .json({ message: "사용자 ID가 제공되지 않았습니다." });
+    }
+    // 숫자형으로 변환해 안전하게 사용
+    userId = Number(userId);
+    if (Number.isNaN(userId) || userId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
 
     // 페이징 파라미터 (쿼리스트링): ?page=1&limit=9 (기본 3x3 그리드)
     let page = parseInt(req.query.page, 10);
