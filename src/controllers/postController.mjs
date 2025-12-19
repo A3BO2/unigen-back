@@ -98,7 +98,7 @@ export const getFeed = async (req, res) => {
     const userId = req.user.userId;
     const mode = req.query.mode || "all";
     const page = parseInt(req.query.page) || 1;
-    const size = parseInt(req.query.size) || 30;
+    const size = parseInt(req.query.size) || 10;
     const all = req.query.all || "false";
 
     const offset = (page - 1) * size;
