@@ -98,7 +98,8 @@ export const getFeed = async (req, res) => {
     const userId = req.user.userId;
     const mode = req.query.mode || "all";
     const page = parseInt(req.query.page) || 1;
-    const size = parseInt(req.query.size) || 10;
+    const size = parseInt(req.query.size) || 30;
+    const all = req.query.all || "false";
 
     const offset = (page - 1) * size;
     const limit = size + 1; // hasNext 확인용으로 하나 더 가져오기
@@ -118,11 +119,19 @@ export const getFeed = async (req, res) => {
         u.profile_image as authorProfileImageUrl
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
-      INNER JOIN user_follows uf ON uf.followee_id = ? AND uf.follower_id = u.id
+      ${
+        all === "false"
+          ? "INNER JOIN user_follows uf ON uf.followee_id = ? AND uf.follower_id = u.id"
+          : ""
+      }
       WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
     `;
 
-    const params = [userId];
+    const params = [];
+
+    if (all === "false") {
+      params.push(userId);
+    }
 
     if (mode === "senior") {
       // 시니어 모드일때 게시물
@@ -170,8 +179,6 @@ export const getFeed = async (req, res) => {
     res.status(500).json({ message: "서버 오류" });
   }
 };
-
-// F010: 탐색 게시물 조회
 
 // controllers/reelController.js
 export const getReel = async (req, res) => {
