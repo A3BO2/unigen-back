@@ -5,6 +5,11 @@ import sharp from "sharp"; // 이미지 처리 라이브러리
 import fs from "fs/promises";
 import path from "path";
 
+// 영상 용량 압축 모듈
+import ffmpeg from "fluent-ffmpeg";
+import ffmeginstaller from "@ffmpeg-installer/ffmpeg";
+ffmpeg.setFfmpegPath(ffmeginstaller.path);
+
 // F004: 일반 게시물 작성
 export const createPost = async (req, res) => {
   const connection = await db.getConnection();
@@ -40,47 +45,94 @@ export const createPost = async (req, res) => {
 
     const newPostId = result.insertId;
 
-    // 이미지 반복 처리
-    const imagePromises = req.files.map(async (file, index) => {
-      // 이미지 압축
+    let savedImageUrls = [];
+    let savedVideoUrl = null;
+    // 피드 or 릴스 분기 처리
+    if (postType === "reel") {
+      const file = req.files[0];
+
+      // 원본 경로, 압축 후 저장될 경로
       const originalFilePath = file.path;
-      const optimizedFilename = `opt_${file.filename}`;
-      const optimizedFilePath = path.join(file.destination, optimizedFilename);
-      const dbImageUrl = `/uploads/${optimizedFilename}`;
+      const compressedFilename = `comp_${file.filename}.mp4`;
+      const compressedFilePath = path.join(
+        file.destination,
+        compressedFilename
+      );
+      savedVideoUrl = `/uploads/${compressedFilename}`;
 
-      await sharp(originalFilePath)
-        .resize({ width: 1080 })
-        .jpeg({ quality: 80 })
-        .toFile(optimizedFilePath);
+      await new Promise((resolve, reject) => {
+        ffmpeg(originalFilePath)
+          .videoCodec("libx264") // 가장 호환성 좋은 코덱
+          .size("720x?") // 너비 720p로 리사이징 (높이는 자동)
+          .videoBitrate("1000k") // 비트레이트 1000k (화질/용량 타협점)
+          .audioCodec("aac") // 오디오 코덱
+          .audioBitrate("128k") // 오디오 음질
+          .outputOptions("-preset fast") // 속도 우선 (veryfast, fast, medium)
+          .on("end", () => {
+            console.log("동영상 압축 완료!");
+            resolve();
+          })
+          .on("error", (err) => {
+            console.error("동영상 압축 에러:", err);
+            reject(err);
+          })
+          .save(compressedFilePath); // 저장 시작
+      });
 
-      // 원본 삭제
+      // 압축 성공 시 원본 삭제
       await fs.unlink(originalFilePath);
 
-      // db 저장 쿼리
-      await connection.execute(
-        `INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)`,
-        [newPostId, dbImageUrl, index]
-      );
-
-      return dbImageUrl;
-    });
-
-    const savedImageUrls = await Promise.all(imagePromises);
-
-    // posts 테이블의 대표 이미지 업데이트(첫 번째 사진)
-    if (savedImageUrls.length > 0) {
-      await connection.execute(`UPDATE posts SET image_url = ? WHERE id = ?`, [
-        savedImageUrls[0],
+      await connection.execute("UPDATE posts SET video_url = ? WHERE id = ?", [
+        savedVideoUrl,
         newPostId,
       ]);
-    }
+      // 썸네일 이미지 있다면 여기서 처리
+    } else {
+      // 이미지 반복 처리
+      const imagePromises = req.files.map(async (file, index) => {
+        // 이미지 압축
+        const originalFilePath = file.path;
+        const optimizedFilename = `opt_${file.filename}`;
+        const optimizedFilePath = path.join(
+          file.destination,
+          optimizedFilename
+        );
+        const dbImageUrl = `/uploads/${optimizedFilename}`;
 
+        await sharp(originalFilePath)
+          .resize({ width: 1080 })
+          .jpeg({ quality: 80 })
+          .toFile(optimizedFilePath);
+
+        // 원본 삭제
+        await fs.unlink(originalFilePath);
+
+        // db 저장 쿼리
+        await connection.execute(
+          `INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)`,
+          [newPostId, dbImageUrl, index]
+        );
+
+        return dbImageUrl;
+      });
+
+      savedImageUrls = await Promise.all(imagePromises);
+
+      // posts 테이블의 대표 이미지 업데이트(첫 번째 사진)
+      if (savedImageUrls.length > 0) {
+        await connection.execute(
+          `UPDATE posts SET image_url = ? WHERE id = ?`,
+          [savedImageUrls[0], newPostId]
+        );
+      }
+    }
     await connection.commit();
 
     res.status(201).json({
       message: "게시글 등록 성공",
       postId: newPostId,
       images: savedImageUrls,
+      video: savedVideoUrl,
     });
   } catch (error) {
     // 에러 시 롤백
@@ -190,11 +242,23 @@ export const getReel = async (req, res) => {
         : Number.MAX_SAFE_INTEGER;
 
     const sql = `
-      SELECT id, author_id, content, image_url, video_url, is_senior_mode, created_at, like_count, comment_count
-      FROM posts
-      WHERE post_type = ?
-        AND id < ?
-      ORDER BY id DESC
+      SELECT 
+        p.id, 
+        p.author_id, 
+        p.content, 
+        p.image_url, 
+        p.video_url, 
+        p.is_senior_mode, 
+        p.created_at, 
+        p.like_count, 
+        p.comment_count,
+        u.username as authorName,              -- 작성자 이름 추가
+        u.profile_image as authorProfile   -- 작성자 프사 추가
+      FROM posts p
+      JOIN users u ON p.author_id = u.id   -- 유저 테이블과 연결
+      WHERE p.post_type = ?
+        AND p.id < ?
+      ORDER BY p.id DESC
       LIMIT 1
     `;
 
