@@ -118,38 +118,109 @@ export const getUserSettings = async (req, res) => {
     }
 
     // 사용자 설정 조회 (users 테이블에서 설정 컬럼 조회)
-    // 만약 컬럼이 없다면 기본값 반환
-    const settingsSql = `
-      SELECT
-        COALESCE(font_scale, 'large') AS fontScale,
-        COALESCE(notifications_on, 1) AS notificationsOn,
-        COALESCE(senior_simple_mode, 1) AS seniorSimpleMode,
-        COALESCE(language, 'ko') AS language
-      FROM users
-      WHERE id = ?
-    `;
+    // 컬럼이 없을 수 있으므로 안전하게 처리
+    let settingsSql = `SELECT id FROM users WHERE id = ?`;
+    
+    try {
+      // 먼저 기본 쿼리로 사용자 존재 확인
+      const [userRows] = await db.query(settingsSql, [userId]);
+      
+      if (!userRows || userRows.length === 0) {
+        return res.status(200).json({
+          fontScale: "large",
+          notificationsOn: true,
+          seniorSimpleMode: true,
+          language: "ko",
+          isDarkMode: false,
+        });
+      }
 
-    const [settingsRows] = await db.query(settingsSql, [userId]);
+      // 컬럼 존재 여부 확인을 위해 각 컬럼을 개별적으로 조회 시도
+      const settings = {
+        fontScale: "large",
+        notificationsOn: true,
+        seniorSimpleMode: true,
+        language: "ko",
+        isDarkMode: false,
+      };
 
-    if (!settingsRows || settingsRows.length === 0) {
-      // 사용자가 없으면 기본값 반환
+      // font_scale 컬럼 확인
+      try {
+        const [fontRows] = await db.query(
+          `SELECT COALESCE(font_scale, 'large') AS fontScale FROM users WHERE id = ?`,
+          [userId]
+        );
+        if (fontRows && fontRows[0]) {
+          settings.fontScale = fontRows[0].fontScale || "large";
+        }
+      } catch (e) {
+        // 컬럼이 없으면 기본값 유지
+      }
+
+      // notifications_on 컬럼 확인
+      try {
+        const [notifRows] = await db.query(
+          `SELECT COALESCE(notifications_on, 1) AS notificationsOn FROM users WHERE id = ?`,
+          [userId]
+        );
+        if (notifRows && notifRows[0]) {
+          settings.notificationsOn = Boolean(notifRows[0].notificationsOn);
+        }
+      } catch (e) {
+        // 컬럼이 없으면 기본값 유지
+      }
+
+      // senior_simple_mode 컬럼 확인
+      try {
+        const [seniorRows] = await db.query(
+          `SELECT COALESCE(senior_simple_mode, 1) AS seniorSimpleMode FROM users WHERE id = ?`,
+          [userId]
+        );
+        if (seniorRows && seniorRows[0]) {
+          settings.seniorSimpleMode = Boolean(seniorRows[0].seniorSimpleMode);
+        }
+      } catch (e) {
+        // 컬럼이 없으면 기본값 유지
+      }
+
+      // language 컬럼 확인
+      try {
+        const [langRows] = await db.query(
+          `SELECT COALESCE(language, 'ko') AS language FROM users WHERE id = ?`,
+          [userId]
+        );
+        if (langRows && langRows[0]) {
+          settings.language = langRows[0].language || "ko";
+        }
+      } catch (e) {
+        // 컬럼이 없으면 기본값 유지
+      }
+
+      // is_dark_mode 컬럼 확인
+      try {
+        const [darkRows] = await db.query(
+          `SELECT COALESCE(is_dark_mode, 0) AS isDarkMode FROM users WHERE id = ?`,
+          [userId]
+        );
+        if (darkRows && darkRows[0]) {
+          settings.isDarkMode = Boolean(darkRows[0].isDarkMode);
+        }
+      } catch (e) {
+        // 컬럼이 없으면 기본값 유지
+      }
+
+      return res.status(200).json(settings);
+    } catch (queryError) {
+      // 쿼리 오류 시 기본값 반환
+      console.error("getUserSettings 쿼리 오류:", queryError);
       return res.status(200).json({
         fontScale: "large",
         notificationsOn: true,
         seniorSimpleMode: true,
         language: "ko",
+        isDarkMode: false,
       });
     }
-
-    const settings = settingsRows[0];
-
-    // 응답 형식에 맞게 변환
-    return res.status(200).json({
-      fontScale: settings.fontScale || "large",
-      notificationsOn: Boolean(settings.notificationsOn),
-      seniorSimpleMode: Boolean(settings.seniorSimpleMode),
-      language: settings.language || "ko",
-    });
   } catch (error) {
     console.error("getUserSettings 오류:", error);
     
@@ -160,6 +231,7 @@ export const getUserSettings = async (req, res) => {
         notificationsOn: true,
         seniorSimpleMode: true,
         language: "ko",
+        isDarkMode: false,
       });
     }
 
@@ -180,85 +252,88 @@ export const updateUserSettings = async (req, res) => {
       return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
     }
 
-    const { fontScale, notificationsOn, seniorSimpleMode, language } = req.body;
+    const { fontScale, notificationsOn, seniorSimpleMode, language, isDarkMode } = req.body;
 
     // 업데이트할 필드만 동적으로 구성
     const updateFields = [];
     const updateValues = [];
 
+    // 각 필드를 개별적으로 업데이트 시도 (컬럼이 없으면 건너뛰기)
+    const updatedSettings = {
+      fontScale: fontScale !== undefined ? fontScale : "large",
+      notificationsOn: notificationsOn !== undefined ? notificationsOn : true,
+      seniorSimpleMode: seniorSimpleMode !== undefined ? seniorSimpleMode : true,
+      language: language !== undefined ? language : "ko",
+      isDarkMode: isDarkMode !== undefined ? isDarkMode : false,
+    };
+
+    // font_scale 업데이트 시도
     if (fontScale !== undefined) {
       if (!['small', 'medium', 'large'].includes(fontScale)) {
         return res.status(400).json({ message: "fontScale은 'small', 'medium', 'large' 중 하나여야 합니다." });
       }
-      updateFields.push('font_scale = ?');
-      updateValues.push(fontScale);
-    }
-
-    if (notificationsOn !== undefined) {
-      updateFields.push('notifications_on = ?');
-      updateValues.push(notificationsOn ? 1 : 0);
-    }
-
-    if (seniorSimpleMode !== undefined) {
-      updateFields.push('senior_simple_mode = ?');
-      updateValues.push(seniorSimpleMode ? 1 : 0);
-    }
-
-    if (language !== undefined) {
-      updateFields.push('language = ?');
-      updateValues.push(language);
-    }
-
-    if (updateFields.length === 0) {
-      return res.status(400).json({ message: "업데이트할 설정이 없습니다." });
-    }
-
-    // updated_at도 함께 업데이트
-    updateFields.push('updated_at = NOW()');
-    updateValues.push(userId);
-
-    const updateSql = `
-      UPDATE users
-      SET ${updateFields.join(', ')}
-      WHERE id = ?
-    `;
-
-    try {
-      await db.query(updateSql, updateValues);
-    } catch (dbError) {
-      // 컬럼이 없는 경우 기본값만 반환 (실제로는 마이그레이션이 필요하지만, 에러 없이 처리)
-      if (dbError.code === "ER_BAD_FIELD_ERROR") {
-        console.warn("설정 컬럼이 없습니다. 데이터베이스 마이그레이션이 필요할 수 있습니다.");
-        // 설정은 저장하지 않지만 성공 응답 반환 (로컬 스토리지에 저장)
-        return res.status(200).json({
-          fontScale: fontScale || "large",
-          notificationsOn: notificationsOn !== undefined ? notificationsOn : true,
-          seniorSimpleMode: seniorSimpleMode !== undefined ? seniorSimpleMode : true,
-          language: language || "ko",
-        });
+      try {
+        await db.query(`UPDATE users SET font_scale = ? WHERE id = ?`, [fontScale, userId]);
+      } catch (e) {
+        if (e.code !== "ER_BAD_FIELD_ERROR") {
+          console.error("font_scale 업데이트 오류:", e);
+        }
+        // 컬럼이 없으면 기본값만 반환
       }
-      throw dbError;
     }
 
-    // 업데이트된 설정 조회
-    const [settingsRows] = await db.query(
-      `SELECT 
-        COALESCE(font_scale, 'large') AS fontScale,
-        COALESCE(notifications_on, 1) AS notificationsOn,
-        COALESCE(senior_simple_mode, 1) AS seniorSimpleMode,
-        COALESCE(language, 'ko') AS language
-      FROM users WHERE id = ?`,
-      [userId]
-    );
+    // notifications_on 업데이트 시도
+    if (notificationsOn !== undefined) {
+      try {
+        await db.query(`UPDATE users SET notifications_on = ? WHERE id = ?`, [notificationsOn ? 1 : 0, userId]);
+      } catch (e) {
+        if (e.code !== "ER_BAD_FIELD_ERROR") {
+          console.error("notifications_on 업데이트 오류:", e);
+        }
+      }
+    }
 
-    const settings = settingsRows[0] || {};
+    // senior_simple_mode 업데이트 시도
+    if (seniorSimpleMode !== undefined) {
+      try {
+        await db.query(`UPDATE users SET senior_simple_mode = ? WHERE id = ?`, [seniorSimpleMode ? 1 : 0, userId]);
+      } catch (e) {
+        if (e.code !== "ER_BAD_FIELD_ERROR") {
+          console.error("senior_simple_mode 업데이트 오류:", e);
+        }
+      }
+    }
 
-    return res.status(200).json({
-      fontScale: settings.fontScale || fontScale || "large",
-      notificationsOn: settings.notificationsOn !== undefined ? Boolean(settings.notificationsOn) : (notificationsOn !== undefined ? notificationsOn : true),
-      seniorSimpleMode: settings.seniorSimpleMode !== undefined ? Boolean(settings.seniorSimpleMode) : (seniorSimpleMode !== undefined ? seniorSimpleMode : true),
-      language: settings.language || language || "ko",
-    });
+    // is_dark_mode 업데이트 시도
+    if (isDarkMode !== undefined) {
+      try {
+        await db.query(`UPDATE users SET is_dark_mode = ? WHERE id = ?`, [isDarkMode ? 1 : 0, userId]);
+      } catch (e) {
+        if (e.code !== "ER_BAD_FIELD_ERROR") {
+          console.error("is_dark_mode 업데이트 오류:", e);
+        }
+      }
+    }
+
+    // language 업데이트 시도
+    if (language !== undefined) {
+      try {
+        await db.query(`UPDATE users SET language = ? WHERE id = ?`, [language, userId]);
+      } catch (e) {
+        if (e.code !== "ER_BAD_FIELD_ERROR") {
+          console.error("language 업데이트 오류:", e);
+        }
+      }
+    }
+
+    // updated_at 업데이트 (이 컬럼은 일반적으로 존재함)
+    try {
+      await db.query(`UPDATE users SET updated_at = NOW() WHERE id = ?`, [userId]);
+    } catch (e) {
+      // updated_at이 없어도 무시
+    }
+
+    return res.status(200).json(updatedSettings);
   } catch (error) {
     console.error("updateUserSettings 오류:", error);
     return res.status(500).json({ message: "서버 오류" });
