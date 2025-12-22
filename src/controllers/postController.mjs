@@ -156,47 +156,95 @@ export const getFeed = async (req, res) => {
     const offset = (page - 1) * size;
     const limit = size + 1; // hasNext 확인용으로 하나 더 가져오기
 
-    let sql = `
-      SELECT 
-        p.id,
-        p.content,
-        p.image_url as imageUrl,
-        p.post_type as postType,
-        p.is_senior_mode as isSeniorMode,
-        p.like_count as likeCount,
-        p.comment_count as commentCount,
-        p.created_at as createdAt,
-        u.id as authorId,
-        u.name as authorName,
-        u.profile_image as authorProfileImageUrl
-      FROM posts p
-      INNER JOIN users u ON p.author_id = u.id
-      ${
-        all === "false"
-          ? "INNER JOIN user_follows uf ON uf.followee_id = ? AND uf.follower_id = u.id"
-          : ""
-      }
-      WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
-    `;
-
+    let sql;
     const params = [];
 
     if (all === "false") {
-      params.push(userId);
-    }
+      // UNION으로 본인 게시물 + 팔로우한 사람 게시물
+      const modeCondition =
+        mode === "senior"
+          ? "AND p.is_senior_mode = 1"
+          : mode === "normal"
+          ? "AND p.is_senior_mode = 0"
+          : "";
 
-    if (mode === "senior") {
-      // 시니어 모드일때 게시물
-      sql += ` AND p.is_senior_mode = ?`;
-      params.push(true);
-    } else if (mode === "normal") {
-      sql += ` AND p.is_senior_mode = ?`;
-      params.push(false);
-    }
+      sql = `
+        SELECT 
+          p.id,
+          p.content,
+          p.image_url as imageUrl,
+          p.post_type as postType,
+          p.is_senior_mode as isSeniorMode,
+          p.like_count as likeCount,
+          p.comment_count as commentCount,
+          p.created_at as createdAt,
+          u.id as authorId,
+          u.name as authorName,
+          u.profile_image as authorProfileImageUrl
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        WHERE p.deleted_at IS NULL 
+          AND p.post_type = 'feed'
+          AND p.author_id = ?
+          ${modeCondition}
+        
+        UNION
+        
+        SELECT 
+          p.id,
+          p.content,
+          p.image_url as imageUrl,
+          p.post_type as postType,
+          p.is_senior_mode as isSeniorMode,
+          p.like_count as likeCount,
+          p.comment_count as commentCount,
+          p.created_at as createdAt,
+          u.id as authorId,
+          u.name as authorName,
+          u.profile_image as authorProfileImageUrl
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        INNER JOIN user_follows uf ON uf.followee_id = ? AND uf.follower_id = p.author_id
+        WHERE p.deleted_at IS NULL 
+          AND p.post_type = 'feed'
+          ${modeCondition}
+        
+        ORDER BY createdAt DESC
+        LIMIT ? OFFSET ?
+      `;
 
-    // page=2, size=10일 때 LIMIT 11 OFFSET 10 → 11번째부터 21번째 행까지 11개를 가져옴
-    sql += ` ORDER BY p.created_at DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+      params.push(userId, userId, limit, offset);
+    } else {
+      // 모든 게시물 조회
+      sql = `
+        SELECT 
+          p.id,
+          p.content,
+          p.image_url as imageUrl,
+          p.post_type as postType,
+          p.is_senior_mode as isSeniorMode,
+          p.like_count as likeCount,
+          p.comment_count as commentCount,
+          p.created_at as createdAt,
+          u.id as authorId,
+          u.name as authorName,
+          u.profile_image as authorProfileImageUrl
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
+      `;
+
+      if (mode === "senior") {
+        sql += ` AND p.is_senior_mode = ?`;
+        params.push(true);
+      } else if (mode === "normal") {
+        sql += ` AND p.is_senior_mode = ?`;
+        params.push(false);
+      }
+
+      sql += ` ORDER BY p.created_at DESC LIMIT ? OFFSET ?`;
+      params.push(limit, offset);
+    }
 
     // 구조분해 할당으로 실제 데이터 행만 추출
     const [rows] = await db.query(sql, params);
