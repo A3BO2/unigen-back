@@ -335,3 +335,81 @@ export const getReel = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+export const getStory = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    if (!userId) {
+      return res.status(401).json({ message: "로그인이 필요합니다." });
+    }
+
+    const sql = `
+      SELECT 
+        p.id,
+        p.image_url as imageUrl,
+        p.created_at as createdAt,
+        u.id as authorId,
+        u.name as authorName,
+        u.profile_image as authorProfileImageUrl
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      WHERE p.deleted_at IS NULL 
+        AND p.post_type = 'story'
+        AND p.author_id = ?
+      
+      UNION ALL
+      
+      SELECT 
+        p.id,
+        p.image_url as imageUrl,
+        p.created_at as createdAt,
+        u.id as authorId,
+        u.name as authorName,
+        u.profile_image as authorProfileImageUrl
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      INNER JOIN user_follows uf ON uf.follower_id = p.author_id AND uf.followee_id = ?
+      WHERE p.deleted_at IS NULL 
+        AND p.post_type = 'story'
+      ORDER BY createdAt DESC
+    `;
+
+    const [rows] = await db.query(sql, [userId, userId]);
+
+    // 사용자별로 스토리를 그룹화
+    const storiesByUser = rows.reduce((acc, row) => {
+      const authorId = row.authorId;
+      if (!acc[authorId]) {
+        acc[authorId] = {
+          userId: authorId,
+          author: {
+            name: row.authorName,
+            profileImageUrl: row.authorProfileImageUrl,
+          },
+          items: [],
+        };
+      }
+      acc[authorId].items.push({
+        id: row.id,
+        imageUrl: row.imageUrl,
+        createdAt: row.createdAt,
+      });
+      return acc;
+    }, {});
+
+    // 객체를 배열로 변환
+    const stories = Object.values(storiesByUser);
+
+    res.status(200).json({
+      message: "스토리 조회 성공",
+      stories,
+    });
+  } catch (error) {
+    console.error("getStory error:", {
+      error,
+      userId: req.user?.userId,
+    });
+    res.status(500).json({ message: "Server error" });
+  }
+};
