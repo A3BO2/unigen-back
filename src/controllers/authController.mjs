@@ -296,13 +296,7 @@ export const kakaoLogin = async (req, res) => {
 // 카카오 회원가입
 export const kakaoSignup = async (req, res) => {
   try {
-    const {
-      access_token,
-      username,
-      phone,
-      name,
-      preferred_mode,
-    } = req.body;
+    const { access_token, username, phone, name, preferred_mode } = req.body;
 
     if (!access_token) {
       return res.status(400).json({
@@ -430,5 +424,44 @@ export const kakaoSignup = async (req, res) => {
       success: false,
       message: err.message || "서버 오류",
     });
+  }
+};
+
+// 비밀번호 변경(로그인 상태 or 비밀번호 찾기 후)
+export const changePassword = async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    // 데이터 받기
+    const { currentPassword, newPassword, contact } = req.body;
+    let userId = req.user?.userId;
+
+    // 타겟 유저 찾기
+    let user = null;
+
+    if (userId) {
+      // 1. 로그인 상태에서 변경
+      const [rows] = await connection.execute(
+        "SELECT * FROM users WHERE id = ?",
+        [userId]
+      );
+      user = rows[0];
+
+      // 비밀번호 검증
+      if (currentPassword) {
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+          return res
+            .status(400)
+            .json({ message: "현재 비밀번호가 일치하지 않습니다." });
+        }
+      }
+    } else if (contact) {
+      // 비로그인 상태 (비밀번호 찾기 -> 변경)
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류 발생" });
+  } finally {
+    connection.release();
   }
 };
