@@ -239,7 +239,7 @@ export const kakaoLogin = async (req, res) => {
       "SELECT * FROM users WHERE kakao_user_id = ? AND status = 'active'",
       [kakaoUser.kakaoId]
     );
-    
+
     const user = users.length > 0 ? users[0] : null;
 
     if (!user) {
@@ -257,10 +257,9 @@ export const kakaoLogin = async (req, res) => {
     }
 
     // 3. last_login_at 업데이트
-    await db.query(
-      "UPDATE users SET last_login_at = NOW() WHERE id = ?",
-      [user.id]
-    );
+    await db.query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [
+      user.id,
+    ]);
 
     // 4. JWT 토큰 발급
     const jwtExpires = process.env.JWT_EXPIRES_SEC
@@ -374,7 +373,7 @@ export const kakaoSignup = async (req, res) => {
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), NOW(), NOW())
     `;
-    
+
     const insertParams = [
       "kakao",
       username,
@@ -385,7 +384,7 @@ export const kakaoSignup = async (req, res) => {
       preferred_mode || "normal",
       kakaoUser.kakaoId,
     ];
-    
+
     const [result] = await db.query(insertQuery, insertParams);
     const userId = result.insertId;
 
