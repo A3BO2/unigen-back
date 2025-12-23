@@ -3,6 +3,190 @@ import jwt from "jsonwebtoken";
 import db from "../config/db.mjs";
 import bcrypt from "bcryptjs";
 import { getKakaoUserInfo } from "../utils/kakaoClient.mjs";
+import solapi from "solapi";
+
+// 인증번호 저장소 (seniorController에서 가져옴)
+export const verificationCodes = new Map();
+
+// SMS 발송 내부 함수
+const sendSMS = async (phone, code) => {
+  const apiKey = process.env.SOLAPI_API_KEY;
+  const apiSecret = process.env.SOLAPI_API_SECRET;
+  const fromNumber = process.env.SOLAPI_FROM_NUMBER || phone; // 발신번호 설정
+
+  if (!apiKey || !apiSecret) {
+    throw new Error("SMS API 키가 설정되지 않았습니다.");
+  }
+
+  const { SolapiMessageService } = solapi;
+  const messageService = new SolapiMessageService(apiKey, apiSecret);
+
+  const result = await messageService.sendOne({
+    text: `[유니젠] 인증번호는 ${code}입니다.`,
+    to: phone,
+    from: fromNumber,
+  });
+
+  return result;
+};
+
+// [공용] 인증번호 발송 API (기존 로직 + 타입 체크 통합)
+export const sendAuthCode = async (req, res) => {
+  try {
+    // type: 'signup'(회원가입), 'find_pw'(비번찾기), 'senior'(시니어)
+    const { phone, type } = req.body;
+
+    if (!phone)
+      return res.status(400).json({ message: "전화번호가 필요합니다." });
+
+    const cleanPhone = phone.replace(/-/g, "");
+
+    // 유저 존재 여부 확인 (시니어 등 단순 인증일 때는 체크 생략 가능)
+    if (type === "signup" || type === "find_pw") {
+      const [users] = await db.query("SELECT id FROM users WHERE phone = ?", [
+        cleanPhone,
+      ]);
+      const userExists = users.length > 0;
+
+      if (type === "signup" && userExists) {
+        return res.status(400).json({ message: "이미 가입된 전화번호입니다." });
+      }
+      if (type === "find_pw" && !userExists) {
+        return res
+          .status(404)
+          .json({ message: "가입되지 않은 전화번호입니다." });
+      }
+    }
+
+    // 인증번호 생성 및 저장
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5분
+
+    verificationCodes.set(cleanPhone, { code, expiresAt });
+
+    // SMS 발송
+    await sendSMS(cleanPhone, code);
+    console.log(`[TEST] ${cleanPhone} 인증번호: ${code}`); // 테스트용 로그
+
+    return res
+      .status(200)
+      .json({ success: true, message: "인증번호가 발송되었습니다." });
+  } catch (err) {
+    console.error("인증번호 발송 실패:", err);
+    return res.status(500).json({ success: false, message: "서버 오류" });
+  }
+};
+
+// 인증번호 검증
+export const verifyAuthCode = async (req, res) => {
+  try {
+    const { phone, code } = req.body;
+    const cleanPhone = phone.replace(/-/g, "");
+
+    const stored = verificationCodes.get(cleanPhone);
+
+    if (!stored) {
+      return res
+        .status(400)
+        .json({ success: false, message: "인증번호가 없거나 만료되었습니다." });
+    }
+    if (Date.now() > stored.expiresAt) {
+      verificationCodes.delete(cleanPhone);
+      return res
+        .status(400)
+        .json({ success: false, message: "인증번호가 만료됨" });
+    }
+
+    if (stored.code !== code) {
+      return res
+        .status(400)
+        .json({ success: false, message: "인증번호 불일치" });
+    }
+
+    return res.status(200).json({ success: true, message: "인증 성공" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "서버 오류" });
+  }
+};
+
+// 비밀번호 변경(로그인 상태 or 비밀번호 찾기 후)
+export const changePassword = async (req, res) => {
+  try {
+    const { phone, code, currentPassword, newPassword } = req.body;
+    let userId = null;
+
+    // CASE 1: 로그인 상태 (설정 -> 비밀번호 변경)
+    if (req.headers.authorization && currentPassword) {
+      // 1. 토큰 검증
+      const token = req.headers.authorization.split(" ")[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      userId = decoded.userId || decoded.id;
+
+      // 2. 유저 확인
+      const [rows] = await db.query("SELECT * FROM users WHERE id = ?", [
+        userId,
+      ]);
+      const user = rows[0];
+
+      if (!user) {
+        return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+      }
+
+      // 3. 현재 비밀번호 검증
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res
+          .status(400)
+          .json({ message: "현재 비밀번호가 일치하지 않습니다." });
+      }
+
+      // 검증 통과 -> userId 확보됨
+    }
+
+    // CASE 2: 비밀번호 찾기 (인증번호 -> 비밀번호 변경)
+    else if (phone && code) {
+      // [수정 포인트] phone이 확실히 있을 때만 replace 실행
+      const cleanPhone = phone.replace(/-/g, "");
+
+      // 1. 인증번호 검증
+      const stored = verificationCodes.get(cleanPhone);
+      if (!stored || stored.code !== code) {
+        return res
+          .status(400)
+          .json({ message: "인증 정보가 유효하지 않습니다." });
+      }
+
+      // 2. 전화번호로 유저 찾기
+      const [rows] = await db.query("SELECT id FROM users WHERE phone = ?", [
+        cleanPhone,
+      ]);
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+      }
+      userId = rows[0].id;
+
+      // 검증 통과! 사용한 인증번호 삭제
+      verificationCodes.delete(cleanPhone);
+    } else {
+      return res
+        .status(400)
+        .json({ message: "잘못된 요청입니다. (필수 정보 누락)" });
+    }
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await db.query(
+      "UPDATE users SET password = ?, updated_at = NOW() WHERE id = ?",
+      [hashed, userId]
+    );
+
+    return res
+      .status(200)
+      .json({ success: true, message: "비밀번호가 변경되었습니다." });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
 
 export const signup = async (req, res) => {
   try {
@@ -239,7 +423,7 @@ export const kakaoLogin = async (req, res) => {
       "SELECT * FROM users WHERE kakao_user_id = ? AND status = 'active'",
       [kakaoUser.kakaoId]
     );
-    
+
     const user = users.length > 0 ? users[0] : null;
 
     if (!user) {
@@ -257,10 +441,9 @@ export const kakaoLogin = async (req, res) => {
     }
 
     // 3. last_login_at 업데이트
-    await db.query(
-      "UPDATE users SET last_login_at = NOW() WHERE id = ?",
-      [user.id]
-    );
+    await db.query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [
+      user.id,
+    ]);
 
     // 4. JWT 토큰 발급
     const jwtExpires = process.env.JWT_EXPIRES_SEC
@@ -296,13 +479,7 @@ export const kakaoLogin = async (req, res) => {
 // 카카오 회원가입
 export const kakaoSignup = async (req, res) => {
   try {
-    const {
-      access_token,
-      username,
-      phone,
-      name,
-      preferred_mode,
-    } = req.body;
+    const { access_token, username, phone, name, preferred_mode } = req.body;
 
     if (!access_token) {
       return res.status(400).json({
@@ -380,7 +557,7 @@ export const kakaoSignup = async (req, res) => {
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), NOW(), NOW())
     `;
-    
+
     const insertParams = [
       "kakao",
       username,
@@ -391,7 +568,7 @@ export const kakaoSignup = async (req, res) => {
       preferred_mode || "normal",
       kakaoUser.kakaoId,
     ];
-    
+
     const [result] = await db.query(insertQuery, insertParams);
     const userId = result.insertId;
 

@@ -2,138 +2,7 @@
 import jwt from "jsonwebtoken";
 import db from "../config/db.mjs";
 import { getKakaoUserInfo } from "../utils/kakaoClient.mjs";
-import solapi from "solapi";
-
-// 인증번호 저장소 (메모리 기반, 프로덕션에서는 Redis 사용 권장)
-const verificationCodes = new Map(); // phone -> { code, expiresAt }
-
-// 6자리 인증번호 생성
-const generateVerificationCode = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
-
-// SMS 발송 함수
-const sendSMS = async (phone, code) => {
-  try {
-    const apiKey = process.env.SOLAPI_API_KEY;
-    const apiSecret = process.env.SOLAPI_API_SECRET;
-    const fromNumber = process.env.SOLAPI_FROM_NUMBER || phone; // 발신번호
-
-    if (!apiKey || !apiSecret) {
-      throw new Error("SMS API 키가 설정되지 않았습니다.");
-    }
-
-    const { SolapiMessageService } = solapi;
-    const messageService = new SolapiMessageService(apiKey, apiSecret);
-
-    const message = {
-      text: `[유니젠] 인증번호는 ${code}입니다.`,
-      to: phone,
-      from: fromNumber,
-    };
-
-    // sendOne 메서드 사용 (단일 메시지 발송)
-    const result = await messageService.sendOne(message);
-    return result;
-  } catch (error) {
-    console.error("SMS 발송 실패:", error);
-    throw error;
-  }
-};
-
-// SMS 인증번호 발송
-export const sendVerificationCode = async (req, res) => {
-  try {
-    const { phone } = req.body;
-
-    if (!phone) {
-      return res.status(400).json({
-        success: false,
-        message: "전화번호가 필요합니다.",
-      });
-    }
-
-    // 전화번호 형식 정리 (하이픈 제거)
-    const cleanPhone = phone.replace(/-/g, "");
-
-    // 6자리 인증번호 생성
-    const code = generateVerificationCode();
-
-    // 인증번호 저장 (5분 유효)
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5분
-    verificationCodes.set(cleanPhone, {
-      code,
-      expiresAt,
-    });
-
-    // SMS 발송
-    await sendSMS(cleanPhone, code);
-
-    res.status(200).json({
-      success: true,
-      message: "인증번호가 발송되었습니다.",
-    });
-  } catch (error) {
-    console.error("인증번호 발송 실패:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "인증번호 발송에 실패했습니다.",
-    });
-  }
-};
-
-// SMS 인증번호 검증
-export const verifyCode = async (req, res) => {
-  try {
-    const { phone, code } = req.body;
-
-    if (!phone || !code) {
-      return res.status(400).json({
-        success: false,
-        message: "전화번호와 인증번호가 필요합니다.",
-      });
-    }
-
-    const cleanPhone = phone.replace(/-/g, "");
-    const stored = verificationCodes.get(cleanPhone);
-
-    if (!stored) {
-      return res.status(400).json({
-        success: false,
-        message: "인증번호가 발송되지 않았거나 만료되었습니다.",
-      });
-    }
-
-    if (Date.now() > stored.expiresAt) {
-      verificationCodes.delete(cleanPhone);
-      return res.status(400).json({
-        success: false,
-        message: "인증번호가 만료되었습니다.",
-      });
-    }
-
-    if (stored.code !== code) {
-      return res.status(400).json({
-        success: false,
-        message: "인증번호가 일치하지 않습니다.",
-      });
-    }
-
-    // 인증 성공 - 인증번호 삭제
-    verificationCodes.delete(cleanPhone);
-
-    res.status(200).json({
-      success: true,
-      message: "인증번호가 확인되었습니다.",
-    });
-  } catch (error) {
-    console.error("인증번호 검증 실패:", error);
-    res.status(500).json({
-      success: false,
-      message: "인증번호 검증에 실패했습니다.",
-    });
-  }
-};
+import { verificationCodes } from "./authController.mjs";
 
 // 시니어 번호 인증 가입/로그인
 export const seniorPhoneAuth = async (req, res) => {
@@ -208,10 +77,9 @@ export const seniorPhoneAuth = async (req, res) => {
         ["phone", username, null, userName, cleanPhone]
       );
 
-      const [newUsers] = await db.query(
-        "SELECT * FROM users WHERE id = ?",
-        [result.insertId]
-      );
+      const [newUsers] = await db.query("SELECT * FROM users WHERE id = ?", [
+        result.insertId,
+      ]);
       user = newUsers[0];
     }
 
@@ -333,12 +201,7 @@ export const seniorKakaoLogin = async (req, res) => {
 // 시니어 카카오 회원가입
 export const seniorKakaoSignup = async (req, res) => {
   try {
-    const {
-      access_token,
-      username,
-      phone,
-      name,
-    } = req.body;
+    const { access_token, username, phone, name } = req.body;
 
     if (!access_token) {
       return res.status(400).json({
@@ -471,5 +334,5 @@ export const seniorKakaoSignup = async (req, res) => {
 };
 
 export const getSeniorHome = async (req, res) => {
-  res.send('시니어 홈 화면 데이터 (구현 예정)');
+  res.send("시니어 홈 화면 데이터 (구현 예정)");
 };
