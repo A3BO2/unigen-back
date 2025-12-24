@@ -27,6 +27,4 @@ router.get("/reels", verifyToken, getReel);
 
 router.get("/seniorFeed", verifyToken, getSeniorFeed);
 
-router.get("/seniorFeed", verifyToken, getSeniorFeed);
-
 export default router;
