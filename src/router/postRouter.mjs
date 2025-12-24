@@ -7,7 +7,6 @@ import {
   getReel,
   getFeed,
   getSeniorFeed,
-  getStory,
 } from "../controllers/postController.mjs";
 import { upload } from "../middleware/uploadMiddleware.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
