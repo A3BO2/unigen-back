@@ -11,7 +11,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmeginstaller from "@ffmpeg-installer/ffmpeg";
 ffmpeg.setFfmpegPath(ffmeginstaller.path);
 
-// F004: 일반 게시물 작성
+// F004: 일반 피드 작성
 export const createPost = async (req, res) => {
   const connection = await db.getConnection();
 
@@ -142,6 +142,66 @@ export const createPost = async (req, res) => {
     res.status(500).json({ message: "서버 오류" });
   } finally {
     connection.release();
+  }
+};
+
+// 피드 수정
+export const updatePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const { content } = req.body;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다" });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return req.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    await db.query(
+      "UPDATE posts SET content = ?, updated_at = NOW() WHERE id = ?",
+      [content, postId]
+    );
+    res.status(200).json({ message: "게시물이 수정되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const deletePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return res.status(403).json({ message: "삭제 권한이 없습니다." });
+    }
+
+    await db.query("UPDATE posts SET deleted_at = NOW() WHERE id = ?", [
+      postId,
+    ]);
+
+    res.status(200).json({ message: "게시물이 삭제되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
   }
 };
 
