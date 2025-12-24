@@ -336,3 +336,122 @@ export const seniorKakaoSignup = async (req, res) => {
 export const getSeniorHome = async (req, res) => {
   res.send("시니어 홈 화면 데이터 (구현 예정)");
 };
+
+export const postComment = async (req, res) => {
+  const userId = req.user.userId;
+  const postId = req.params.postId;
+  const { content } = req.body;
+
+  if (!content) {
+    return res.status(400).json({
+      success: false,
+      message: "댓글 내용을 입력해주세요.",
+    });
+  }
+
+  try {
+    const [result] = await db.execute(
+      `
+      INSERT INTO comments (post_id, author_id, content, created_at)
+      VALUES (?, ?, ?, NOW())
+    `,
+      [postId, userId, content]
+    );
+    res.status(201).json({
+      success: true,
+      message: "댓글이 성공적으로 작성되었습니다.",
+      commentId: result.insertId,
+    });
+  } catch (error) {
+    console.error("댓글 작성 오류:", error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const getCommentsByPost = async (req, res) => {
+  const postId = req.params.postId;
+
+  try {
+    const [comments] = await db.execute(
+      `
+      SELECT c.id AS commentId, c.content, c.created_at AS createdAt, u.id AS authorId, u.name AS authorName, u.profile_image AS authorProfileImage
+      FROM comments c
+      JOIN users u ON c.author_id = u.id
+      WHERE c.post_id = ? AND c.deleted_at IS NULL
+      ORDER BY c.created_at DESC
+    `,
+      [postId]
+    );
+    res.status(200).json({
+      success: true,
+      message: "댓글 조회 성공",
+      data: comments,
+    });
+  } catch (error) {
+    console.error("댓글 조회 오류:", error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const likePost = async (req, res) => {
+  const userId = req.user.userId;
+  const postId = req.params.postId;
+
+  try {
+    const sql = `INSERT INTO likes (post_id, user_id, created_at)
+      VALUES (?, ?, NOW())`;
+
+    await db.execute(sql, [postId, userId]);
+
+    const updatesql = `UPDATE posts SET like_count = (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) WHERE posts.id = ?`;
+
+    await db.execute(updatesql, [postId]);
+
+    res.status(200).json({ success: true, message: "게시물 좋아요 완료" });
+  } catch (error) {
+    console.error("게시물 좋아요 오류:", error);
+    res.status(500).json({ success: false, message: "서버 오류" });
+  }
+};
+
+export const unlikePost = async (req, res) => {
+  const userId = req.user.userId;
+  const postId = req.params.postId;
+
+  try {
+    const sql = `DELETE FROM likes WHERE post_id = ? AND user_id = ?`;
+
+    await db.execute(sql, [postId, userId]);
+
+    const updatesql = `UPDATE posts SET like_count = (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) WHERE posts.id = ?`;
+
+    await db.execute(updatesql, [postId]);
+
+    res.status(200).json({ success: true, message: "게시물 좋아요 취소 완료" });
+  } catch (error) {
+    console.error("게시물 좋아요 취소 오류:", error);
+    res.status(500).json({ success: false, message: "서버 오류" });
+  }
+};
+
+export const isPostLike = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const postId = req.params.postId;
+
+    const sql = `
+      SELECT id FROM likes WHERE post_id = ? AND user_id = ?
+    `;
+    const [rows] = await db.execute(sql, [postId, userId]);
+
+    const isLiked = rows.length > 0;
+
+    res.status(200).json({
+      success: true,
+      isLiked: isLiked,
+    });
+  } catch (error) {
+    console.error("게시물 좋아요 여부 확인 오류:", error);
+    res.status(500).json({ success: false, message: "서버 오류" });
+  }
+};

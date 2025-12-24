@@ -10,6 +10,16 @@ import {
   seniorKakaoLogin,
   seniorKakaoSignup,
 } from "../controllers/seniorController.mjs";
+import { verifyToken } from "../middleware/authMiddleware.mjs";
+
+import {
+  postComment,
+  likePost,
+  unlikePost,
+  isPostLike,
+  getCommentsByPost,
+} from "../controllers/seniorController.mjs";
+
 const router = express.Router();
 
 // SMS 인증번호 발송
@@ -29,4 +39,13 @@ router.post("/auth/kakao/signup", seniorKakaoSignup);
 
 router.get("/home", getSeniorHome);
 
+router.post("/comment/:postId", verifyToken, postComment);
+
+router.get("/comment/:postId", verifyToken, getCommentsByPost);
+
+router.post("/postlike/:postId", verifyToken, likePost);
+
+router.delete("/postlike/:postId", verifyToken, unlikePost);
+
+router.get("/postlike/:postId", verifyToken, isPostLike);
 export default router;
