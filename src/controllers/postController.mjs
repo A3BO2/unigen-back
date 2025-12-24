@@ -634,6 +634,7 @@ export const getSeniorFeed = async (req, res) => {
       id: row.id,
       user: {
         name: row.authorName,
+        authorId: row.authorId,
         avatar: row.authorProfileImageUrl,
       },
       content: row.content,
