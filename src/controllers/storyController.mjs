@@ -55,9 +55,9 @@ export const getStories = async (req, res) => {
       // 각 사용자의 마지막 스토리 시간 비교 (가장 최근에 올린 스토리)
       const aLastStory = a.items[a.items.length - 1];
       const bLastStory = b.items[b.items.length - 1];
-      
+
       if (!aLastStory || !bLastStory) return 0;
-      
+
       // 마지막 스토리의 createdAt 기준으로 내림차순 정렬 (최신 것부터)
       const aTime = new Date(aLastStory.createdAt).getTime();
       const bTime = new Date(bLastStory.createdAt).getTime();
@@ -122,5 +122,82 @@ export const createStory = async (req, res) => {
   } finally {
     // 커넥션 반납
     connection.release();
+  }
+};
+
+export const watchStory = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const storyId = req.params.storyId;
+
+    const [existing] = await db.execute(
+      `SELECT id FROM story_views WHERE story_id = ? AND viewer_id = ?`,
+      [storyId, userId]
+    );
+
+    if (existing.length > 0) {
+      return res
+        .status(200)
+        .json({ success: true, message: "이미 시청한 스토리" });
+    }
+
+    const sql = `
+      INSERT INTO story_views (story_id, viewer_id, viewed_at)
+      VALUES (?, ?, NOW())`;
+
+    await db.execute(sql, [storyId, userId]);
+
+    res
+      .status(200)
+      .json({ success: true, message: "스토리 시청 기록 저장 완료" });
+  } catch (error) {
+    console.error("스토리 시청 기록 저장 오류:", error);
+    res.status(500).json({ success: false, message: "서버 오류" });
+  }
+};
+
+export const getStoryViewers = async (req, res) => {
+  try {
+    const storyId = req.params.storyId;
+
+    const sql = `
+      SELECT u.id AS userId, u.name AS userName, u.profile_image AS profileImage, sv.viewed_at AS viewedAt
+      FROM story_views sv
+      JOIN users u ON sv.viewer_id = u.id
+      WHERE sv.story_id = ? AND u.id != ?
+      ORDER BY sv.viewed_at DESC
+    `;
+    const [rows] = await db.execute(sql, [storyId, req.user.userId]);
+    res.status(200).json({
+      success: true,
+      viewers: rows.map((row) => ({
+        userId: row.userId,
+        userName: row.userName || "알 수 없음",
+        profileImageUrl: row.profileImage || null,
+        viewedAt: row.viewedAt,
+      })),
+    });
+  } catch (error) {
+    console.error("스토리 시청자 조회 오류:", error);
+    res.status(500).json({ success: false, message: "서버 오류" });
+  }
+};
+
+export const isMineStory = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const storyId = req.params.storyId;
+
+    const [rows] = await db.execute(
+      `SELECT id FROM stories WHERE id = ? AND user_id = ?`,
+      [storyId, userId]
+    );
+
+    const isMine = rows.length > 0;
+
+    res.status(200).json({ success: true, isMine });
+  } catch (error) {
+    console.error("스토리 소유권 확인 오류:", error);
+    res.status(500).json({ success: false, message: "서버 오류" });
   }
 };
