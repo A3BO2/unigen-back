@@ -4,7 +4,7 @@ import {
   createPost,
   getReel,
   getFeed,
-  getStory,
+  getSeniorFeed,
 } from "../controllers/postController.mjs";
 import { upload } from "../middleware/uploadMiddleware.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
@@ -19,6 +19,6 @@ router.get("/feed", verifyToken, getFeed);
 
 router.get("/reels", verifyToken, getReel);
 
-router.get("/stories", verifyToken, getStory);
+router.get("/seniorFeed", verifyToken, getSeniorFeed);
 
 export default router;

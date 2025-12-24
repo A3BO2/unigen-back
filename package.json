@@ -9,6 +9,7 @@
     "dev": "nodemon app.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.957.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@prisma/client": "^7.2.0",
     "bcrypt": "^6.0.0",
@@ -21,7 +22,9 @@
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.9.0",
     "openai": "^4.28.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "solapi": "^5.5.3",
+    "tslib": "^2.8.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
