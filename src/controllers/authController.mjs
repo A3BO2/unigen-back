@@ -349,6 +349,7 @@ export const login = async (req, res) => {
           id: user.id,
           username: user.username,
           name: user.name,
+          profile_image: user.profile_image,
         },
       },
       token: token,
