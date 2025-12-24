@@ -123,7 +123,7 @@ export const getUserSettings = async (req, res) => {
     const defaultSettings = {
       fontScale: "large",
       notificationsOn: true,
-      seniorSimpleMode: true,
+      seniorSimpleMode: true, // 현재는 별도 컬럼 없이 기본값 유지
       language: "ko",
       isDarkMode: false,
     };
@@ -150,7 +150,7 @@ export const getUserSettings = async (req, res) => {
         row.notifications_on !== null && row.notifications_on !== undefined
           ? Boolean(row.notifications_on)
           : true,
-      seniorSimpleMode: true,
+      seniorSimpleMode: true, // 별도 관리가 필요하면 이후 확장
       language: row.language || "ko",
       isDarkMode:
         row.dark_mode !== null && row.dark_mode !== undefined
