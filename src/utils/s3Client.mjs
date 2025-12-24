@@ -17,9 +17,7 @@ const REGION = process.env.AWS_REGION;
 // 필요 시 커스텀 도메인(CloudFront/S3 정적 웹) 설정
 const PUBLIC_BASE_URL =
   process.env.S3_PUBLIC_BASE_URL ||
-  (BUCKET && REGION
-    ? `https://${BUCKET}.s3.${REGION}.amazonaws.com`
-    : null);
+  (BUCKET && REGION ? `https://${BUCKET}.s3.${REGION}.amazonaws.com` : null);
 
 // ACL이 차단된 버킷이라면 S3_OBJECT_ACL를 비우세요.
 const DEFAULT_ACL = process.env.S3_OBJECT_ACL || null;
@@ -38,7 +36,9 @@ export async function uploadToS3(
 ) {
   try {
     if (!BUCKET || !REGION) {
-      throw new Error("S3_BUCKET_NAME 또는 AWS_REGION 환경변수가 설정되지 않았습니다.");
+      throw new Error(
+        "S3_BUCKET_NAME 또는 AWS_REGION 환경변수가 설정되지 않았습니다."
+      );
     }
 
     const params = {
@@ -57,8 +57,7 @@ export async function uploadToS3(
 
     // 공개 URL 생성
     const baseUrl =
-      PUBLIC_BASE_URL ||
-      `https://${BUCKET}.s3.${REGION}.amazonaws.com`;
+      PUBLIC_BASE_URL || `https://${BUCKET}.s3.${REGION}.amazonaws.com`;
     const url = `${baseUrl}/${fileName}`;
 
     return url;
@@ -69,4 +68,3 @@ export async function uploadToS3(
 }
 
 export default s3Client;
-

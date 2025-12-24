@@ -4,6 +4,7 @@ import db from "../config/db.mjs";
 import sharp from "sharp"; // 이미지 처리 라이브러리
 import fs from "fs/promises";
 import path from "path";
+import { uploadToS3 } from "../utils/s3Client.mjs";
 import { getRelativeTime } from "../utils/dateUtils.mjs";
 
 // 영상 용량 압축 모듈
@@ -11,7 +12,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmeginstaller from "@ffmpeg-installer/ffmpeg";
 ffmpeg.setFfmpegPath(ffmeginstaller.path);
 
-// F004: 일반 게시물 작성
+// F004: 일반 피드 작성
 export const createPost = async (req, res) => {
   const connection = await db.getConnection();
 
@@ -54,12 +55,9 @@ export const createPost = async (req, res) => {
 
       // 원본 경로, 압축 후 저장될 경로
       const originalFilePath = file.path;
-      const compressedFilename = `comp_${file.filename}.mp4`;
-      const compressedFilePath = path.join(
-        file.destination,
-        compressedFilename
-      );
-      savedVideoUrl = `/uploads/${compressedFilename}`;
+      const outputDir = file.destination || path.dirname(originalFilePath);
+      const compressedFilename = `comp_${file.filename || Date.now()}.mp4`;
+      const compressedFilePath = path.join(outputDir, compressedFilename);
 
       await new Promise((resolve, reject) => {
         ffmpeg(originalFilePath)
@@ -80,41 +78,48 @@ export const createPost = async (req, res) => {
           .save(compressedFilePath); // 저장 시작
       });
 
-      // 압축 성공 시 원본 삭제
-      await fs.unlink(originalFilePath);
+      // 압축된 파일을 읽어서 s3에 업로드
+      const videoBuffer = await fs.readFile(compressedFilePath);
+      savedVideoUrl = await uploadToS3(
+        videoBuffer,
+        `posts/reels/${compressedFilename}`,
+        "video/mp4"
+      );
 
       await connection.execute("UPDATE posts SET video_url = ? WHERE id = ?", [
         savedVideoUrl,
         newPostId,
       ]);
-      // 썸네일 이미지 있다면 여기서 처리
-    } else {
+
+      await fs.unlink(originalFilePath).catch(() => {}); // 압축 성공 시 원본 삭제
+      await fs.unlink(compressedFilePath).catch(() => {}); // 압축본 삭제
+    }
+    // 일반 피드 처리
+    else {
       // 이미지 반복 처리
       const imagePromises = req.files.map(async (file, index) => {
         // 이미지 압축
         const originalFilePath = file.path;
-        const optimizedFilename = `opt_${file.filename}`;
-        const optimizedFilePath = path.join(
-          file.destination,
-          optimizedFilename
-        );
-        const dbImageUrl = `/uploads/${optimizedFilename}`;
+        const s3FileName = `posts/images/${Date.now()}_${index}.jpg`;
 
-        await sharp(originalFilePath)
+        const imageBuffer = await sharp(originalFilePath)
           .resize({ width: 1080 })
           .jpeg({ quality: 80 })
-          .toFile(optimizedFilePath);
+          .toBuffer();
+
+        // s3 업로드
+        const s3Url = await uploadToS3(imageBuffer, s3FileName, "image/jpeg");
 
         // 원본 삭제
-        await fs.unlink(originalFilePath);
+        await fs.unlink(originalFilePath).catch(() => {});
 
         // db 저장 쿼리
         await connection.execute(
           `INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)`,
-          [newPostId, dbImageUrl, index]
+          [newPostId, s3Url, index]
         );
 
-        return dbImageUrl;
+        return s3Url;
       });
 
       savedImageUrls = await Promise.all(imagePromises);
@@ -142,6 +147,66 @@ export const createPost = async (req, res) => {
     res.status(500).json({ message: "서버 오류" });
   } finally {
     connection.release();
+  }
+};
+
+// 피드 수정
+export const updatePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const { content } = req.body;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다" });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    await db.query(
+      "UPDATE posts SET content = ?, updated_at = NOW() WHERE id = ?",
+      [content, postId]
+    );
+    res.status(200).json({ message: "게시물이 수정되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const deletePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return res.status(403).json({ message: "삭제 권한이 없습니다." });
+    }
+
+    await db.query("UPDATE posts SET deleted_at = NOW() WHERE id = ?", [
+      postId,
+    ]);
+
+    res.status(200).json({ message: "게시물이 삭제되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
   }
 };
 
@@ -270,10 +335,10 @@ export const getFeed = async (req, res) => {
     }));
 
     res.status(200).json({
-      items,
+      items: items,
       page,
       size,
-      hasNext,
+      hasNext: hasNext,
     });
   } catch (error) {
     console.error(error);
@@ -332,6 +397,84 @@ export const getReel = async (req, res) => {
     console.error("getReel error:", {
       error,
       lastId: req.query.lastId,
+    });
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const getStory = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    if (!userId) {
+      return res.status(401).json({ message: "로그인이 필요합니다." });
+    }
+
+    const sql = `
+      SELECT 
+        p.id,
+        p.image_url as imageUrl,
+        p.created_at as createdAt,
+        u.id as authorId,
+        u.name as authorName,
+        u.profile_image as authorProfileImageUrl
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      WHERE p.deleted_at IS NULL 
+        AND p.post_type = 'story'
+        AND p.author_id = ?
+      
+      UNION ALL
+      
+      SELECT 
+        p.id,
+        p.image_url as imageUrl,
+        p.created_at as createdAt,
+        u.id as authorId,
+        u.name as authorName,
+        u.profile_image as authorProfileImageUrl
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      INNER JOIN user_follows uf ON uf.follower_id = ? AND uf.followee_id = p.author_id
+      WHERE p.deleted_at IS NULL 
+        AND p.post_type = 'story'
+      ORDER BY createdAt DESC
+    `;
+
+    const [rows] = await db.query(sql, [userId, userId]);
+
+    // 사용자별로 스토리를 그룹화
+    const storiesByUser = rows.reduce((acc, row) => {
+      const authorId = row.authorId;
+      if (!acc[authorId]) {
+        acc[authorId] = {
+          userId: authorId,
+          author: {
+            name: row.authorName,
+            profileImageUrl: row.authorProfileImageUrl,
+          },
+          items: [],
+        };
+      }
+      acc[authorId].items.push({
+        id: row.id,
+        imageUrl: row.imageUrl,
+        createdAt: row.createdAt,
+      });
+      return acc;
+    }, {});
+
+    // 객체를 배열로 변환
+    const stories = Object.values(storiesByUser);
+
+    res.status(200).json({
+      message: "스토리 조회 성공",
+      stories,
+    });
+  } catch (error) {
+    console.error("getStory error:", {
+      error,
+      userId: req.user?.userId,
     });
     res.status(500).json({ message: "Server error" });
   }
@@ -503,6 +646,7 @@ export const getSeniorFeed = async (req, res) => {
 
     res.status(200).json(items);
   } catch (error) {
-    console.error("=== getSeniorFeed 에러 ===").json(items);
+    console.error("=== getSeniorFeed 에러 ===");
+    res.status(500).json({ message: "서버 오류" });
   }
 };
