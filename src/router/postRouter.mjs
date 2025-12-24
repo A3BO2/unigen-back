@@ -6,7 +6,6 @@ import {
   deletePost,
   getReel,
   getFeed,
-  getStory,
   getSeniorFeed,
 } from "../controllers/postController.mjs";
 import { upload } from "../middleware/uploadMiddleware.mjs";
@@ -26,7 +25,7 @@ router.get("/feed", verifyToken, getFeed);
 
 router.get("/reels", verifyToken, getReel);
 
-router.get("/stories", verifyToken, getStory);
+router.get("/seniorFeed", verifyToken, getSeniorFeed);
 
 router.get("/seniorFeed", verifyToken, getSeniorFeed);
 

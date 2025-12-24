@@ -12,6 +12,7 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
+// 로컬 디스크 스토리지 (기존 기능 유지)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     // 수정된 부분: 'uploads/' 대신 절대 경로 변수(uploadDir) 사용
@@ -23,4 +24,11 @@ const storage = multer.diskStorage({
   },
 });
 
+// 메모리 스토리지 (S3 업로드용)
+const memoryStorage = multer.memoryStorage();
+
+// 기존 로컬 업로드 (다른 컨트롤러에서 사용)
 export const upload = multer({ storage: storage });
+
+// S3 업로드용 (스토리 전용)
+export const uploadToS3 = multer({ storage: memoryStorage });

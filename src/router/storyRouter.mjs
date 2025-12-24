@@ -1,10 +1,14 @@
 import express from "express";
-import { createStory } from "../controllers/storyController.mjs";
+import { createStory, getStories } from "../controllers/storyController.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
-import { upload } from "../middleware/uploadMiddleware.mjs";
+import { uploadToS3 } from "../middleware/uploadMiddleware.mjs";
 
 const router = express.Router();
 
-router.post("/", verifyToken, upload.single("media"), createStory);
+// 스토리 조회
+router.get("/", verifyToken, getStories);
+
+// 메모리 스토리지(버퍼)로 받아서 S3 업로드
+router.post("/", verifyToken, uploadToS3.single("media"), createStory);
 
 export default router;
