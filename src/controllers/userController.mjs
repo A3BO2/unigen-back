@@ -161,6 +161,18 @@ export const getUserSettings = async (req, res) => {
     return res.status(200).json(settings);
   } catch (error) {
     console.error("getUserSettings 오류:", error);
+
+    // 데이터베이스 컬럼이 없는 경우를 대비해 기본값 반환
+    if (error.code === "ER_BAD_FIELD_ERROR") {
+      return res.status(200).json({
+        fontScale: "large",
+        notificationsOn: true,
+        seniorSimpleMode: true,
+        language: "ko",
+        isDarkMode: false,
+      });
+    }
+
     return res.status(500).json({ message: "서버 오류" });
   }
 };
@@ -193,8 +205,7 @@ export const updateUserSettings = async (req, res) => {
       !["small", "medium", "large"].includes(fontScale)
     ) {
       return res.status(400).json({
-        message:
-          "fontScale은 'small', 'medium', 'large' 중 하나여야 합니다.",
+        message: "fontScale은 'small', 'medium', 'large' 중 하나여야 합니다.",
       });
     }
 
@@ -219,7 +230,7 @@ export const updateUserSettings = async (req, res) => {
         rows[0]?.dark_mode !== undefined && rows[0]?.dark_mode !== null
           ? Boolean(rows[0].dark_mode)
           : false,
-      seniorSimpleMode: true, // 현재는 별도 컬럼 없이 기본값 유지
+      seniorSimpleMode: true,
     };
 
     // 요청 값으로 덮어쓰기 (undefined인 값은 기존 값 유지)
@@ -261,6 +272,140 @@ export const updateUserSettings = async (req, res) => {
     return res.status(200).json(updated);
   } catch (error) {
     console.error("updateUserSettings 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const followUser = async (req, res) => {
+  try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const followerId = Number(req.user.id);
+    const followeeId = req.query.followeeId;
+
+    if (Number.isNaN(followerId) || followerId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로워 ID가 필요합니다." });
+    }
+
+    const followeeIdNum = Number(followeeId);
+    if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로잉 대상 ID가 필요합니다." });
+    }
+
+    if (followerId === followeeIdNum) {
+      return res
+        .status(400)
+        .json({ message: "자기 자신을 팔로우할 수 없습니다." });
+    }
+
+    // 이미 팔로우 중인지 확인
+    const [existingRows] = await db.query(
+      `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
+      [followerId, followeeIdNum]
+    );
+    if (existingRows && existingRows.length > 0) {
+      return res.status(400).json({ message: "이미 팔로우 중입니다." });
+    }
+
+    // 팔로우 관계 추가
+    await db.query(
+      `INSERT INTO user_follows (follower_id, followee_id) VALUES (?, ?)`,
+      [followerId, followeeIdNum]
+    );
+    return res.status(200).json({ message: "팔로우 성공" });
+  } catch (error) {
+    console.error("followUser 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const unfollowUser = async (req, res) => {
+  try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const followerId = Number(req.user.id);
+    const followeeId = req.query.followeeId;
+
+    if (Number.isNaN(followerId) || followerId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로워 ID가 필요합니다." });
+    }
+
+    const followeeIdNum = Number(followeeId);
+    if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로잉 대상 ID가 필요합니다." });
+    }
+
+    // 팔로우 관계 삭제
+    const [result] = await db.query(
+      `DELETE FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
+      [followerId, followeeIdNum]
+    );
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(400)
+        .json({ message: "팔로우 관계가 존재하지 않습니다." });
+    }
+
+    return res.status(200).json({ message: "언팔로우 성공" });
+  } catch (error) {
+    console.error("unfollowUser 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const isFollowing = async (req, res) => {
+  try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const followerId = Number(req.user.id);
+    const followeeId = req.query.followeeId;
+    console.log("followeeId:", followeeId);
+
+    if (Number.isNaN(followerId) || followerId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로워 ID가 필요합니다." });
+    }
+
+    const followeeIdNum = Number(followeeId);
+    if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로잉 대상 ID가 필요합니다." });
+    }
+
+    // 자기 자신인지 확인
+    const isMine = followerId === followeeIdNum;
+
+    // 팔로우 관계 확인
+    const [existingRows] = await db.query(
+      `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
+      [followerId, followeeIdNum]
+    );
+
+    const isFollowing = existingRows && existingRows.length > 0;
+
+    return res.status(200).json({ isFollowing, isMine });
+  } catch (error) {
+    console.error("isFollowing 오류:", error);
     return res.status(500).json({ message: "서버 오류" });
   }
 };
