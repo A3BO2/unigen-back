@@ -11,6 +11,14 @@ import {
 import { upload } from "../middleware/uploadMiddleware.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
 
+
+import {
+  likePost,
+  unlikePost,
+  isPostLike,
+} from "../controllers/seniorController.mjs";
+
+
 const router = express.Router();
 
 // 최대 10장
@@ -26,5 +34,11 @@ router.get("/feed", verifyToken, getFeed);
 router.get("/reels", verifyToken, getReel);
 
 router.get("/seniorFeed", verifyToken, getSeniorFeed);
+
+// 좋아요
+router.post("/:postId/like", verifyToken, likePost);
+router.delete("/:postId/like", verifyToken, unlikePost);
+router.get("/:postId/is-liked", verifyToken, isPostLike);
+
 
 export default router;
