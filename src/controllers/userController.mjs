@@ -401,13 +401,7 @@ export const followUser = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    // 팔로우할 유저 ID는 body에서 받음, 쿼리로 받는(unfollowUser처럼) 방식 혼돈 우려.
-    // 만약 API 일관성을 원한다면 둘 다 body나 둘 다 query로 수정 권장.
-    const { followee_id } = req.body;
-
-    if (!followee_id) {
-      return res.status(400).json({ message: "팔로우할 사용자 ID가 필요합니다." });
-    }
+    const followeeId = req.body.followee_id;
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res.status(400).json({ message: "유효한 팔로워 ID가 필요합니다." });
@@ -462,8 +456,7 @@ export const unfollowUser = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    // 팔로우 취소 기능: followeeId는 쿼리 파라미터에서 받음
-    const followeeId = req.query.followeeId;
+    const followeeId = req.body.followee_id;
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
@@ -512,7 +505,8 @@ export const isFollowing = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.query.followeeId;
+    const followeeId = req.query.followee_id;
+    console.log("followeeId:", followeeId);
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
