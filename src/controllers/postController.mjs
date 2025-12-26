@@ -332,6 +332,7 @@ export const getFeed = async (req, res) => {
       likeCount: row.likeCount,
       commentCount: row.commentCount,
       createdAt: row.createdAt,
+      timestamp: getRelativeTime(row.createdAt),
     }));
 
     res.status(200).json({
@@ -460,6 +461,7 @@ export const getStory = async (req, res) => {
         id: row.id,
         imageUrl: row.imageUrl,
         createdAt: row.createdAt,
+        timestamp: getRelativeTime(row.createdAt),
       });
       return acc;
     }, {});
@@ -480,6 +482,7 @@ export const getStory = async (req, res) => {
   }
 };
 
+// [postController.mjs 의 getSeniorFeed 함수 전체 수정]
 export const getSeniorFeed = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -489,13 +492,13 @@ export const getSeniorFeed = async (req, res) => {
     const all = req.query.all || "false";
 
     const offset = (page - 1) * size;
-    const limit = size + 1; // hasNext 확인용으로 하나 더 가져오기
+    const limit = size + 1;
 
     let sql;
     const params = [];
 
+    // 1. SQL 쿼리 구성 (기존 로직 유지)
     if (all === "false") {
-      // UNION으로 본인 게시물 + 팔로우한 사람 게시물
       const modeCondition =
         mode === "senior"
           ? "AND p.is_senior_mode = 1"
@@ -505,131 +508,74 @@ export const getSeniorFeed = async (req, res) => {
 
       sql = `
         SELECT 
-          p.id,
-          p.content,
-          p.image_url as imageUrl,
-          p.like_count as likeCount,
-          p.created_at as createdAt,
-          u.id as authorId,
-          u.name as authorName,
-          u.profile_image as authorProfileImageUrl,
+          p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
+          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
-        WHERE p.deleted_at IS NULL 
-          AND p.post_type = 'feed'
-          AND p.author_id = ?
-          ${modeCondition}
-        
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' AND p.author_id = ? ${modeCondition}
         UNION
-        
         SELECT 
-          p.id,
-          p.content,
-          p.image_url as imageUrl,
-          p.like_count as likeCount,
-          p.created_at as createdAt,
-          u.id as authorId,
-          u.name as authorName,
-          u.profile_image as authorProfileImageUrl,
+          p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
+          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
         INNER JOIN user_follows uf ON uf.follower_id = ? AND uf.followee_id = p.author_id
-        WHERE p.deleted_at IS NULL 
-          AND p.post_type = 'feed'
-          ${modeCondition}
-        
-        ORDER BY createdAt DESC
-        LIMIT ? OFFSET ?
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' ${modeCondition}
+        ORDER BY createdAt DESC LIMIT ? OFFSET ?
       `;
-
       params.push(userId, userId, userId, userId, limit, offset);
     } else {
-      // 팔로우하지 않은 사용자의 게시물 조회
       sql = `
         SELECT 
-          p.id,
-          p.content,
-          p.image_url as imageUrl,
-          p.like_count as likeCount,
-          p.created_at as createdAt,
-          u.id as authorId,
-          u.name as authorName,
-          u.profile_image as authorProfileImageUrl,
+          p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
+          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
-        WHERE p.deleted_at IS NULL 
-          AND p.post_type = 'feed'
-          AND p.author_id != ?
-          AND NOT EXISTS (
-            SELECT 1 FROM user_follows uf 
-            WHERE uf.follower_id = ? AND uf.followee_id = p.author_id
-          )
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' AND p.author_id != ?
+        AND NOT EXISTS (SELECT 1 FROM user_follows uf WHERE uf.follower_id = ? AND uf.followee_id = p.author_id)
       `;
-
       params.push(userId, userId, userId);
-
-      if (mode === "senior") {
-        sql += ` AND p.is_senior_mode = ?`;
-        params.push(true);
-      } else if (mode === "normal") {
-        sql += ` AND p.is_senior_mode = ?`;
-        params.push(false);
-      }
-
+      if (mode === "senior")
+        (sql += ` AND p.is_senior_mode = ?`), params.push(true);
+      else if (mode === "normal")
+        (sql += ` AND p.is_senior_mode = ?`), params.push(false);
       sql += ` ORDER BY p.created_at DESC LIMIT ? OFFSET ?`;
       params.push(limit, offset);
     }
 
-    // 구조분해 할당으로 실제 데이터 행만 추출
     const [rows] = await db.query(sql, params);
-
-    // hasNext 확인
-    const hasNext = rows.length > size;
     const posts = rows.slice(0, size);
-
-    // 각 포스트에 대한 댓글 가져오기
     const postIds = posts.map((p) => p.id);
-    let commentsMap = {};
 
+    // 2. 댓글 가져오기
+    let commentsMap = {};
     if (postIds.length > 0) {
       const commentsSql = `
-        SELECT 
-          c.id,
-          c.post_id as postId,
-          c.content as text,
-          c.created_at as createdAt,
-          u.id as userId,
-          u.name as userName,
-          u.profile_image as userAvatar
+        SELECT c.id, c.post_id as postId, c.content as text, c.created_at as createdAt,
+          u.id as userId, u.name as userName, u.profile_image as userAvatar
         FROM comments c
         INNER JOIN users u ON c.author_id = u.id
         WHERE c.post_id IN (?) AND c.deleted_at IS NULL
         ORDER BY c.created_at ASC
       `;
-
       const [commentsRows] = await db.query(commentsSql, [postIds]);
 
-      // 포스트별로 댓글 그룹화
       commentsRows.forEach((comment) => {
-        if (!commentsMap[comment.postId]) {
-          commentsMap[comment.postId] = [];
-        }
+        if (!commentsMap[comment.postId]) commentsMap[comment.postId] = [];
         commentsMap[comment.postId].push({
           id: comment.id,
-          user: {
-            name: comment.userName,
-            avatar: comment.userAvatar,
-          },
+          user: { name: comment.userName, avatar: comment.userAvatar },
           text: comment.text,
+          // 🔥 [서버 처리] 댓글 시간도 서버에서 계산해서 보냄
           time: getRelativeTime(comment.createdAt),
         });
       });
     }
 
-    // 최종 응답 데이터 구조 생성
+    // 3. 최종 데이터 매핑 (서버에서 처리 완료)
     const items = posts.map((row) => ({
       id: row.id,
       user: {
@@ -640,14 +586,17 @@ export const getSeniorFeed = async (req, res) => {
       content: row.content,
       photo: row.imageUrl,
       likes: row.likeCount,
+
+      // 🔥 [서버 처리] 여기서 '방금 전' 같은 완성된 문자열을 보냅니다.
       timestamp: getRelativeTime(row.createdAt),
+
       liked: Boolean(row.isLiked),
       comments: commentsMap[row.id] || [],
     }));
 
     res.status(200).json(items);
   } catch (error) {
-    console.error("=== getSeniorFeed 에러 ===");
+    console.error("=== getSeniorFeed 에러 ===", error);
     res.status(500).json({ message: "서버 오류" });
   }
 };
