@@ -7,9 +7,8 @@ import {
   getReel,
   getFeed,
   getSeniorFeed,
-  getPostById,
 } from "../controllers/postController.mjs";
-import { uploadToS3 } from "../middleware/uploadMiddleware.mjs";
+import { upload } from "../middleware/uploadMiddleware.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
 
 
@@ -22,8 +21,8 @@ import {
 
 const router = express.Router();
 
-// 최대 10장 - S3 업로드용 메모리 스토리지 사용
-router.post("/", verifyToken, uploadToS3.array("images", 10), createPost);
+// 최대 10장
+router.post("/", verifyToken, upload.array("images", 10), createPost);
 
 router.put("/:id", verifyToken, updatePost);
 
@@ -34,14 +33,7 @@ router.get("/feed", verifyToken, getFeed);
 
 router.get("/reels", verifyToken, getReel);
 
-<<<<<<< HEAD
-router.get("/stories", verifyToken, getStory);
-
-// 단일 게시물 조회
-router.get("/:id", verifyToken, getPostById);
-=======
 router.get("/seniorFeed", verifyToken, getSeniorFeed);
->>>>>>> master
 
 // 좋아요
 router.post("/:postId/like", verifyToken, likePost);
