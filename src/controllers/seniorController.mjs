@@ -4,6 +4,29 @@ import db from "../config/db.mjs";
 import { getKakaoUserInfo } from "../utils/kakaoClient.mjs";
 import { verificationCodes } from "./authController.mjs";
 
+// 로그인 시 세션 기록 및 last_login_at 업데이트 헬퍼 함수
+const recordLoginSession = async (userId, authMethod, req) => {
+  try {
+    const deviceInfo = req.headers['user-agent'] || 'Unknown';
+    
+    // 1. users 테이블의 last_login_at 업데이트
+    await db.query(
+      "UPDATE users SET last_login_at = NOW() WHERE id = ?",
+      [userId]
+    );
+    
+    // 2. user_sessions 테이블에 세션 정보 추가
+    await db.query(
+      `INSERT INTO user_sessions (user_id, auth_method, started_at, device_info)
+      VALUES (?, ?, NOW(), ?)`,
+      [userId, authMethod, deviceInfo]
+    );
+  } catch (error) {
+    console.error("로그인 세션 기록 실패:", error);
+    // 로그인은 성공했으므로 에러를 throw하지 않고 로그만 남김
+  }
+};
+
 // 시니어 번호 인증 가입/로그인
 export const seniorPhoneAuth = async (req, res) => {
   try {
@@ -27,6 +50,15 @@ export const seniorPhoneAuth = async (req, res) => {
       });
     }
 
+    // 인증 성공 시 phone_verifications 테이블 업데이트
+    await db.query(
+      `UPDATE phone_verifications 
+      SET status = 'verified', verified_at = NOW() 
+      WHERE phone = ? AND code = ? AND status = 'pending' 
+      ORDER BY created_at DESC LIMIT 1`,
+      [cleanPhone, code]
+    );
+
     // 인증번호 삭제
     verificationCodes.delete(cleanPhone);
 
@@ -43,15 +75,13 @@ export const seniorPhoneAuth = async (req, res) => {
       // preferred_mode가 senior가 아니면 업데이트
       if (user.preferred_mode !== "senior") {
         await db.query(
-          "UPDATE users SET preferred_mode = 'senior', last_login_at = NOW() WHERE id = ?",
+          "UPDATE users SET preferred_mode = 'senior' WHERE id = ?",
           [user.id]
         );
         user.preferred_mode = "senior";
-      } else {
-        await db.query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [
-          user.id,
-        ]);
       }
+      // 로그인 세션 기록 및 last_login_at 업데이트
+      await recordLoginSession(user.id, 'phone', req);
     } else {
       // 신규 사용자 - 가입
       // name이 없으면 전화번호로 임시 이름 생성
@@ -81,6 +111,8 @@ export const seniorPhoneAuth = async (req, res) => {
         result.insertId,
       ]);
       user = newUsers[0];
+      // 신규 가입 후 로그인 세션 기록
+      await recordLoginSession(user.id, 'phone', req);
     }
 
     // 3. JWT 토큰 발급
@@ -156,15 +188,13 @@ export const seniorKakaoLogin = async (req, res) => {
     // 3. preferred_mode를 senior로 업데이트
     if (user.preferred_mode !== "senior") {
       await db.query(
-        "UPDATE users SET preferred_mode = 'senior', last_login_at = NOW() WHERE id = ?",
+        "UPDATE users SET preferred_mode = 'senior' WHERE id = ?",
         [user.id]
       );
       user.preferred_mode = "senior";
-    } else {
-      await db.query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [
-        user.id,
-      ]);
     }
+    // 로그인 세션 기록 및 last_login_at 업데이트
+    await recordLoginSession(user.id, 'kakao', req);
 
     // 4. JWT 토큰 발급
     const jwtExpires = process.env.JWT_EXPIRES_SEC
