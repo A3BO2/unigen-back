@@ -1,6 +1,8 @@
 // 사용자 관련 함수
 
 import db from "../config/db.mjs";
+import sharp from "sharp"; // 이미지 처리 라이브러리
+import { uploadToS3 } from "../utils/s3Client.mjs";
 
 export const getUserProfile = async (req, res) => {
   try {
@@ -60,6 +62,7 @@ export const getUserProfile = async (req, res) => {
     const postsSql = `
       SELECT
         id,
+        content,
         post_type,
         image_url,
         video_url,
@@ -104,7 +107,78 @@ export const getUserProfile = async (req, res) => {
     return res.status(500).json({ message: "서버 오류" });
   }
 };
-// 사용자 설정 조회
+
+// 내 프로필 수정 (이름, 프로필 이미지 등)
+export const updateUserProfile = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const userId = Number(req.user.id);
+    if (Number.isNaN(userId) || userId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
+
+    const { name, username, profile_image } = req.body;
+
+    if (!name && !username && !profile_image) {
+      return res
+        .status(400)
+        .json({ message: "수정할 값이 없습니다. (name, username, profile_image 중 최소 1개)" });
+    }
+
+    const fields = [];
+    const values = [];
+
+    if (name !== undefined) {
+      fields.push("name = ?");
+      values.push(name);
+    }
+    if (username !== undefined) {
+      fields.push("username = ?");
+      values.push(username);
+    }
+    if (profile_image !== undefined) {
+      fields.push("profile_image = ?");
+      values.push(profile_image);
+    }
+
+    values.push(userId);
+
+    const sql = `UPDATE users SET ${fields.join(
+      ", "
+    )}, updated_at = NOW() WHERE id = ?`;
+
+    await db.query(sql, values);
+
+    // 수정된 프로필 다시 조회해서 반환
+    const [rows] = await db.query(
+      `SELECT id, username, name, profile_image, preferred_mode, status, created_at
+       FROM users
+       WHERE id = ?`,
+      [userId]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "사용자를 찾을 수 없습니다." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        user: rows[0],
+      },
+    });
+  } catch (error) {
+    console.error("updateUserProfile 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
 export const getUserSettings = async (req, res) => {
   try {
     // 인증 미들웨어가 req.user에 id를 주입해야 함
@@ -336,6 +410,186 @@ export const updateUserSettings = async (req, res) => {
     return res.status(200).json(updatedSettings);
   } catch (error) {
     console.error("updateUserSettings 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 프로필 이미지 업로드
+export const uploadProfileImage = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "이미지 파일이 필요합니다." });
+    }
+
+    const userId = Number(req.user.id);
+
+    // 메모리 버퍼에서 이미지 압축 및 리사이즈
+    const s3FileName = `profiles/${userId}_${Date.now()}.jpg`;
+
+    const imageBuffer = await sharp(req.file.buffer)
+      .resize({ width: 400, height: 400, fit: 'cover' }) // 프로필 이미지는 400x400으로 고정
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    // S3에 업로드
+    const s3Url = await uploadToS3(imageBuffer, s3FileName, "image/jpeg");
+
+    // DB에 프로필 이미지 URL 업데이트
+    await db.query(
+      `UPDATE users SET profile_image = ?, updated_at = NOW() WHERE id = ?`,
+      [s3Url, userId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      imageUrl: s3Url,
+    });
+  } catch (error) {
+    console.error("uploadProfileImage 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 사용자 팔로우
+export const followUser = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const followerId = Number(req.user.id);
+    const { followee_id } = req.body;
+
+    if (!followee_id) {
+      return res.status(400).json({ message: "팔로우할 사용자 ID가 필요합니다." });
+    }
+
+    const followeeId = Number(followee_id);
+    if (Number.isNaN(followeeId) || followeeId <= 0) {
+      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
+
+    if (followerId === followeeId) {
+      return res.status(400).json({ message: "자기 자신을 팔로우할 수 없습니다." });
+    }
+
+    // 사용자 존재 확인
+    const [userRows] = await db.query(
+      `SELECT id FROM users WHERE id = ?`,
+      [followeeId]
+    );
+
+    if (!userRows || userRows.length === 0) {
+      return res.status(404).json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
+    }
+
+    // 이미 팔로우 중인지 확인
+    const [existingRows] = await db.query(
+      `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
+      [followerId, followeeId]
+    );
+
+    if (existingRows && existingRows.length > 0) {
+      return res.status(400).json({ message: "이미 팔로우 중인 사용자입니다." });
+    }
+
+    // 팔로우 추가
+    await db.query(
+      `INSERT INTO user_follows (follower_id, followee_id, created_at) VALUES (?, ?, NOW())`,
+      [followerId, followeeId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "팔로우되었습니다.",
+    });
+  } catch (error) {
+    console.error("followUser 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 사용자 팔로우 취소
+export const unfollowUser = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const followerId = Number(req.user.id);
+    const { followee_id } = req.body;
+
+    if (!followee_id) {
+      return res.status(400).json({ message: "팔로우 취소할 사용자 ID가 필요합니다." });
+    }
+
+    const followeeId = Number(followee_id);
+    if (Number.isNaN(followeeId) || followeeId <= 0) {
+      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
+
+    // 팔로우 관계 확인
+    const [existingRows] = await db.query(
+      `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
+      [followerId, followeeId]
+    );
+
+    if (!existingRows || existingRows.length === 0) {
+      return res.status(400).json({ message: "팔로우하지 않은 사용자입니다." });
+    }
+
+    // 팔로우 취소
+    await db.query(
+      `DELETE FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
+      [followerId, followeeId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "팔로우가 취소되었습니다.",
+    });
+  } catch (error) {
+    console.error("unfollowUser 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 팔로우 여부 확인
+export const isFollowing = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const followerId = Number(req.user.id);
+    const { followee_id } = req.query;
+
+    if (!followee_id) {
+      return res.status(400).json({ message: "확인할 사용자 ID가 필요합니다." });
+    }
+
+    const followeeId = Number(followee_id);
+    if (Number.isNaN(followeeId) || followeeId <= 0) {
+      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
+
+    // 팔로우 관계 확인
+    const [rows] = await db.query(
+      `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
+      [followerId, followeeId]
+    );
+
+    const isFollowing = rows && rows.length > 0;
+
+    return res.status(200).json({
+      isFollowing: isFollowing,
+    });
+  } catch (error) {
+    console.error("isFollowing 오류:", error);
     return res.status(500).json({ message: "서버 오류" });
   }
 };

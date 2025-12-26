@@ -6,14 +6,15 @@ import {
   getFeed,
   getStory,
   getSeniorFeed,
+  getPostById,
 } from "../controllers/postController.mjs";
-import { upload } from "../middleware/uploadMiddleware.mjs";
+import { uploadToS3 } from "../middleware/uploadMiddleware.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
 
 const router = express.Router();
 
-// 최대 10장
-router.post("/", verifyToken, upload.array("images", 10), createPost);
+// 최대 10장 - S3 업로드용 메모리 스토리지 사용
+router.post("/", verifyToken, uploadToS3.array("images", 10), createPost);
 
 // https://api.seniorsns.com/api/v1/posts/feed?mode=senior&page=1&size=10
 router.get("/feed", verifyToken, getFeed);
@@ -22,6 +23,7 @@ router.get("/reels", verifyToken, getReel);
 
 router.get("/stories", verifyToken, getStory);
 
-router.get("/seniorFeed", verifyToken, getSeniorFeed);
+// 단일 게시물 조회
+router.get("/:id", verifyToken, getPostById);
 
 export default router;

@@ -341,14 +341,21 @@ export const login = async (req, res) => {
     });
 
     // 4. Response
+    // 프로필 수정(updateUserProfile)로 변경된 값이 재로그인 시에도 반영되도록
+    // users 테이블의 주요 필드를 그대로 내려준다.
     res.status(200).json({
       success: true,
       message: "로그인 성공",
       data: {
         user: {
           id: user.id,
+          signup_mode: user.signup_mode,
           username: user.username,
           name: user.name,
+          phone: user.phone,
+          profile_image: user.profile_image,
+          preferred_mode: user.preferred_mode,
+          status: user.status,
         },
       },
       token: token,
