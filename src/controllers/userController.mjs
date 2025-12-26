@@ -401,13 +401,13 @@ export const followUser = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.body.followee_id;
+    const followeeId = req.body.followeeId || req.body.followee_id || req.query.followeeId;
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res.status(400).json({ message: "유효한 팔로워 ID가 필요합니다." });
     }
 
-    const followeeIdNum = Number(followee_id);
+    const followeeIdNum = Number(followeeId);
     if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
       return res.status(400).json({ message: "유효한 팔로우 대상 ID가 필요합니다." });
     }
@@ -456,7 +456,7 @@ export const unfollowUser = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.body.followee_id;
+    const followeeId = req.body.followeeId || req.body.followee_id || req.query.followeeId;
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
@@ -505,7 +505,7 @@ export const isFollowing = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.query.followee_id;
+    const followeeId = req.query.followeeId || req.query.followee_id;
     console.log("followeeId:", followeeId);
 
     if (Number.isNaN(followerId) || followerId <= 0) {
