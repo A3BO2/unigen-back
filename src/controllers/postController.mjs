@@ -53,11 +53,25 @@ export const createPost = async (req, res) => {
     if (postType === "reel") {
       const file = req.files[0];
 
-      // 원본 경로, 압축 후 저장될 경로
-      const originalFilePath = file.path;
-      const outputDir = file.destination || path.dirname(originalFilePath);
-      const compressedFilename = `comp_${file.filename || Date.now()}.mp4`;
-      const compressedFilePath = path.join(outputDir, compressedFilename);
+      // 메모리 스토리지 사용 시 file.buffer를 임시 파일로 저장하거나 디스크 스토리지 지원
+      let originalFilePath, compressedFilePath, compressedFilename;
+      if (file.buffer) {
+        // 메모리 스토리지: 버퍼를 임시 파일로 저장
+        const uploadDir = path.join(process.cwd(), "uploads");
+        await fs.mkdir(uploadDir, { recursive: true }).catch(() => {});
+        const originalFilename = `temp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
+        originalFilePath = path.join(uploadDir, originalFilename);
+        await fs.writeFile(originalFilePath, file.buffer);
+
+        compressedFilename = `comp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
+        compressedFilePath = path.join(uploadDir, compressedFilename);
+      } else {
+        // 디스크 스토리지: 경로와 파일명 활용
+        originalFilePath = file.path;
+        const outputDir = file.destination || path.dirname(originalFilePath);
+        compressedFilename = `comp_${file.filename || Date.now()}.mp4`;
+        compressedFilePath = path.join(outputDir, compressedFilename);
+      }
 
       await new Promise((resolve, reject) => {
         ffmpeg(originalFilePath)
@@ -96,22 +110,32 @@ export const createPost = async (req, res) => {
     }
     // 일반 피드 처리
     else {
-      // 이미지 반복 처리
+      // 이미지 반복 처리 (메모리 or 디스크 스토리지 모두 지원)
       const imagePromises = req.files.map(async (file, index) => {
-        // 이미지 압축
-        const originalFilePath = file.path;
         const s3FileName = `posts/images/${Date.now()}_${index}.jpg`;
+        let imageBuffer;
 
-        const imageBuffer = await sharp(originalFilePath)
-          .resize({ width: 1080 })
-          .jpeg({ quality: 80 })
-          .toBuffer();
+        if (file.buffer) {
+          // 메모리 스토리지: 버퍼에서 압축
+          imageBuffer = await sharp(file.buffer)
+            .resize({ width: 1080 })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+        } else {
+          // 디스크 스토리지: 파일 경로에서 압축
+          imageBuffer = await sharp(file.path)
+            .resize({ width: 1080 })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+        }
 
         // s3 업로드
         const s3Url = await uploadToS3(imageBuffer, s3FileName, "image/jpeg");
 
-        // 원본 삭제
-        await fs.unlink(originalFilePath).catch(() => {});
+        // 파일이 디스크에 있다면 삭제
+        if (file.path) {
+          await fs.unlink(file.path).catch(() => {});
+        }
 
         // db 저장 쿼리
         await connection.execute(
@@ -482,7 +506,93 @@ export const getStory = async (req, res) => {
   }
 };
 
-// [postController.mjs 의 getSeniorFeed 함수 전체 수정]
+// 단일 게시물 조회
+export const getPostById = async (req, res) => {
+  try {
+    const postId = parseInt(req.params.id);
+    const userId = req.user?.userId;
+
+    if (Number.isNaN(postId) || postId <= 0) {
+      return res.status(400).json({ message: "유효한 게시물 ID가 필요합니다." });
+    }
+
+    // 게시물 조회
+    const sql = `
+      SELECT 
+        p.id,
+        p.content,
+        p.image_url as imageUrl,
+        p.video_url as videoUrl,
+        p.like_count as likeCount,
+        p.comment_count as commentCount,
+        p.created_at as createdAt,
+        u.id as authorId,
+        u.name as authorName,
+        u.profile_image as authorProfileImageUrl,
+        EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      WHERE p.id = ? AND p.deleted_at IS NULL
+    `;
+
+    const [rows] = await db.query(sql, [userId || 0, postId]);
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    const post = rows[0];
+
+    // 댓글 가져오기
+    const commentsSql = `
+      SELECT 
+        c.id,
+        c.content as text,
+        c.created_at as createdAt,
+        u.id as userId,
+        u.name as userName,
+        u.profile_image as userAvatar
+      FROM comments c
+      INNER JOIN users u ON c.author_id = u.id
+      WHERE c.post_id = ? AND c.deleted_at IS NULL
+      ORDER BY c.created_at ASC
+    `;
+
+    const [commentsRows] = await db.query(commentsSql, [postId]);
+
+    const comments = commentsRows.map((comment) => ({
+      id: comment.id,
+      user: {
+        name: comment.userName,
+        avatar: comment.userAvatar,
+      },
+      text: comment.text,
+      time: getRelativeTime(comment.createdAt),
+    }));
+
+    // 응답 데이터 구조
+    const response = {
+      id: post.id,
+      user: {
+        name: post.authorName,
+        avatar: post.authorProfileImageUrl,
+      },
+      content: post.content,
+      photo: post.imageUrl,
+      video: post.videoUrl,
+      likes: post.likeCount,
+      timestamp: getRelativeTime(post.createdAt),
+      liked: Boolean(post.isLiked),
+      comments: comments,
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    console.error("getPostById 에러:", error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
 export const getSeniorFeed = async (req, res) => {
   try {
     const userId = req.user.userId;
