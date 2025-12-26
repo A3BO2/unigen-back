@@ -284,7 +284,7 @@ export const followUser = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.query.followeeId;
+    const followeeId = req.body.followee_id;
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
@@ -334,7 +334,7 @@ export const unfollowUser = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.query.followeeId;
+    const followeeId = req.body.followee_id;
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
@@ -376,7 +376,7 @@ export const isFollowing = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.query.followeeId;
+    const followeeId = req.query.followee_id;
     console.log("followeeId:", followeeId);
 
     if (Number.isNaN(followerId) || followerId <= 0) {
