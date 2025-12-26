@@ -5,7 +5,9 @@ import path from "path";
 // 스토리 목록 조회
 export const getStories = async (req, res) => {
   try {
-    // 24시간 이내 스토리만 조회
+    const userId = req.user.userId;
+
+    // 24시간 이내 스토리만 조회하고, 본인 스토리 또는 팔로우 중인 사용자의 스토리만 필터링
     const [rows] = await db.query(
       `
       SELECT 
@@ -18,9 +20,17 @@ export const getStories = async (req, res) => {
       FROM stories s
       LEFT JOIN users u ON u.id = s.user_id
       WHERE s.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+        AND (
+          s.user_id = ? 
+          OR EXISTS (
+            SELECT 1 FROM user_follows uf 
+            WHERE uf.follower_id = ? AND uf.followee_id = s.user_id
+          )
+        )
       ORDER BY s.id ASC
       LIMIT 100
-      `
+      `,
+      [userId, userId]
     );
 
     // 사용자별로 묶어서 프론트 기대 형식으로 변환
