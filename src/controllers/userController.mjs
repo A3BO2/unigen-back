@@ -179,6 +179,8 @@ export const updateUserProfile = async (req, res) => {
     return res.status(500).json({ message: "서버 오류" });
   }
 };
+
+// 사용자 설정 조회 (user_settings 테이블 기반)
 export const getUserSettings = async (req, res) => {
   try {
     // 인증 미들웨어가 req.user에 id를 주입해야 함
@@ -188,116 +190,54 @@ export const getUserSettings = async (req, res) => {
 
     const userId = Number(req.user.id);
     if (Number.isNaN(userId) || userId <= 0) {
-      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+      return res
+        .status(400)
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
     }
 
-    // 사용자 설정 조회 (users 테이블에서 설정 컬럼 조회)
-    // 컬럼이 없을 수 있으므로 안전하게 처리
-    let settingsSql = `SELECT id FROM users WHERE id = ?`;
-    
-    try {
-      // 먼저 기본 쿼리로 사용자 존재 확인
-      const [userRows] = await db.query(settingsSql, [userId]);
-      
-      if (!userRows || userRows.length === 0) {
-        return res.status(200).json({
-          fontScale: "large",
-          notificationsOn: true,
-          seniorSimpleMode: true,
-          language: "ko",
-          isDarkMode: false,
-        });
-      }
+    // 기본값
+    const defaultSettings = {
+      fontScale: "large",
+      notificationsOn: true,
+      seniorSimpleMode: true, // 현재는 별도 컬럼 없이 기본값 유지
+      language: "ko",
+      isDarkMode: false,
+    };
 
-      // 컬럼 존재 여부 확인을 위해 각 컬럼을 개별적으로 조회 시도
-      const settings = {
-        fontScale: "large",
-        notificationsOn: true,
-        seniorSimpleMode: true,
-        language: "ko",
-        isDarkMode: false,
-      };
+    // user_settings 테이블에서 설정 조회
+    const [rows] = await db.query(
+      `SELECT id, user_id, font_scale, notifications_on, dark_mode, language
+       FROM user_settings
+       WHERE user_id = ?
+       LIMIT 1`,
+      [userId]
+    );
 
-      // font_scale 컬럼 확인
-      try {
-        const [fontRows] = await db.query(
-          `SELECT COALESCE(font_scale, 'large') AS fontScale FROM users WHERE id = ?`,
-          [userId]
-        );
-        if (fontRows && fontRows[0]) {
-          settings.fontScale = fontRows[0].fontScale || "large";
-        }
-      } catch (e) {
-        // 컬럼이 없으면 기본값 유지
-      }
-
-      // notifications_on 컬럼 확인
-      try {
-        const [notifRows] = await db.query(
-          `SELECT COALESCE(notifications_on, 1) AS notificationsOn FROM users WHERE id = ?`,
-          [userId]
-        );
-        if (notifRows && notifRows[0]) {
-          settings.notificationsOn = Boolean(notifRows[0].notificationsOn);
-        }
-      } catch (e) {
-        // 컬럼이 없으면 기본값 유지
-      }
-
-      // senior_simple_mode 컬럼 확인
-      try {
-        const [seniorRows] = await db.query(
-          `SELECT COALESCE(senior_simple_mode, 1) AS seniorSimpleMode FROM users WHERE id = ?`,
-          [userId]
-        );
-        if (seniorRows && seniorRows[0]) {
-          settings.seniorSimpleMode = Boolean(seniorRows[0].seniorSimpleMode);
-        }
-      } catch (e) {
-        // 컬럼이 없으면 기본값 유지
-      }
-
-      // language 컬럼 확인
-      try {
-        const [langRows] = await db.query(
-          `SELECT COALESCE(language, 'ko') AS language FROM users WHERE id = ?`,
-          [userId]
-        );
-        if (langRows && langRows[0]) {
-          settings.language = langRows[0].language || "ko";
-        }
-      } catch (e) {
-        // 컬럼이 없으면 기본값 유지
-      }
-
-      // is_dark_mode 컬럼 확인
-      try {
-        const [darkRows] = await db.query(
-          `SELECT COALESCE(is_dark_mode, 0) AS isDarkMode FROM users WHERE id = ?`,
-          [userId]
-        );
-        if (darkRows && darkRows[0]) {
-          settings.isDarkMode = Boolean(darkRows[0].isDarkMode);
-        }
-      } catch (e) {
-        // 컬럼이 없으면 기본값 유지
-      }
-
-      return res.status(200).json(settings);
-    } catch (queryError) {
-      // 쿼리 오류 시 기본값 반환
-      console.error("getUserSettings 쿼리 오류:", queryError);
-      return res.status(200).json({
-        fontScale: "large",
-        notificationsOn: true,
-        seniorSimpleMode: true,
-        language: "ko",
-        isDarkMode: false,
-      });
+    if (!rows || rows.length === 0) {
+      // 아직 설정 레코드가 없으면 기본값 반환
+      return res.status(200).json(defaultSettings);
     }
+
+    const row = rows[0];
+
+    const settings = {
+      fontScale: row.font_scale || "large",
+      notificationsOn:
+        row.notifications_on !== null && row.notifications_on !== undefined
+          ? Boolean(row.notifications_on)
+          : true,
+      seniorSimpleMode: true, // 별도 관리가 필요하면 이후 확장
+      language: row.language || "ko",
+      isDarkMode:
+        row.dark_mode !== null && row.dark_mode !== undefined
+          ? Boolean(row.dark_mode)
+          : false,
+    };
+
+    return res.status(200).json(settings);
   } catch (error) {
     console.error("getUserSettings 오류:", error);
-    
+
     // 데이터베이스 컬럼이 없는 경우를 대비해 기본값 반환
     if (error.code === "ER_BAD_FIELD_ERROR") {
       return res.status(200).json({
@@ -313,7 +253,7 @@ export const getUserSettings = async (req, res) => {
   }
 };
 
-// 사용자 설정 업데이트
+// 사용자 설정 업데이트 (user_settings 테이블 기반)
 export const updateUserSettings = async (req, res) => {
   try {
     // 인증 미들웨어가 req.user에 id를 주입해야 함
@@ -323,91 +263,89 @@ export const updateUserSettings = async (req, res) => {
 
     const userId = Number(req.user.id);
     if (Number.isNaN(userId) || userId <= 0) {
-      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+      return res
+        .status(400)
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
     }
 
-    const { fontScale, notificationsOn, seniorSimpleMode, language, isDarkMode } = req.body;
+    const {
+      fontScale,
+      notificationsOn,
+      seniorSimpleMode,
+      language,
+      isDarkMode,
+    } = req.body;
 
-    // 업데이트할 필드만 동적으로 구성
-    const updateFields = [];
-    const updateValues = [];
+    if (
+      fontScale !== undefined &&
+      !["small", "medium", "large"].includes(fontScale)
+    ) {
+      return res.status(400).json({
+        message: "fontScale은 'small', 'medium', 'large' 중 하나여야 합니다.",
+      });
+    }
 
-    // 각 필드를 개별적으로 업데이트 시도 (컬럼이 없으면 건너뛰기)
-    const updatedSettings = {
-      fontScale: fontScale !== undefined ? fontScale : "large",
-      notificationsOn: notificationsOn !== undefined ? notificationsOn : true,
-      seniorSimpleMode: seniorSimpleMode !== undefined ? seniorSimpleMode : true,
-      language: language !== undefined ? language : "ko",
-      isDarkMode: isDarkMode !== undefined ? isDarkMode : false,
+    // 현재 저장된 값 조회 (없으면 기본값에서 시작)
+    const [rows] = await db.query(
+      `SELECT font_scale, notifications_on, dark_mode, language
+       FROM user_settings
+       WHERE user_id = ?
+       LIMIT 1`,
+      [userId]
+    );
+
+    const current = {
+      fontScale: rows[0]?.font_scale || "large",
+      notificationsOn:
+        rows[0]?.notifications_on !== undefined &&
+        rows[0]?.notifications_on !== null
+          ? Boolean(rows[0].notifications_on)
+          : true,
+      language: rows[0]?.language || "ko",
+      isDarkMode:
+        rows[0]?.dark_mode !== undefined && rows[0]?.dark_mode !== null
+          ? Boolean(rows[0].dark_mode)
+          : false,
+      seniorSimpleMode: true,
     };
 
-    // font_scale 업데이트 시도
-    if (fontScale !== undefined) {
-      if (!['small', 'medium', 'large'].includes(fontScale)) {
-        return res.status(400).json({ message: "fontScale은 'small', 'medium', 'large' 중 하나여야 합니다." });
-      }
-      try {
-        await db.query(`UPDATE users SET font_scale = ? WHERE id = ?`, [fontScale, userId]);
-      } catch (e) {
-        if (e.code !== "ER_BAD_FIELD_ERROR") {
-          console.error("font_scale 업데이트 오류:", e);
-        }
-        // 컬럼이 없으면 기본값만 반환
-      }
-    }
+    // 요청 값으로 덮어쓰기 (undefined인 값은 기존 값 유지)
+    const updated = {
+      fontScale: fontScale !== undefined ? fontScale : current.fontScale,
+      notificationsOn:
+        notificationsOn !== undefined
+          ? Boolean(notificationsOn)
+          : current.notificationsOn,
+      language: language !== undefined ? language : current.language,
+      isDarkMode:
+        isDarkMode !== undefined ? Boolean(isDarkMode) : current.isDarkMode,
+      seniorSimpleMode:
+        seniorSimpleMode !== undefined
+          ? Boolean(seniorSimpleMode)
+          : current.seniorSimpleMode,
+    };
 
-    // notifications_on 업데이트 시도
-    if (notificationsOn !== undefined) {
-      try {
-        await db.query(`UPDATE users SET notifications_on = ? WHERE id = ?`, [notificationsOn ? 1 : 0, userId]);
-      } catch (e) {
-        if (e.code !== "ER_BAD_FIELD_ERROR") {
-          console.error("notifications_on 업데이트 오류:", e);
-        }
-      }
-    }
+    // user_settings에 upsert (user_id 기준으로 존재하면 UPDATE, 없으면 INSERT)
+    await db.query(
+      `INSERT INTO user_settings
+         (user_id, font_scale, notifications_on, dark_mode, language, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         font_scale = VALUES(font_scale),
+         notifications_on = VALUES(notifications_on),
+         dark_mode = VALUES(dark_mode),
+         language = VALUES(language),
+         updated_at = NOW()`,
+      [
+        userId,
+        updated.fontScale,
+        updated.notificationsOn ? 1 : 0,
+        updated.isDarkMode ? 1 : 0,
+        updated.language,
+      ]
+    );
 
-    // senior_simple_mode 업데이트 시도
-    if (seniorSimpleMode !== undefined) {
-      try {
-        await db.query(`UPDATE users SET senior_simple_mode = ? WHERE id = ?`, [seniorSimpleMode ? 1 : 0, userId]);
-      } catch (e) {
-        if (e.code !== "ER_BAD_FIELD_ERROR") {
-          console.error("senior_simple_mode 업데이트 오류:", e);
-        }
-      }
-    }
-
-    // is_dark_mode 업데이트 시도
-    if (isDarkMode !== undefined) {
-      try {
-        await db.query(`UPDATE users SET is_dark_mode = ? WHERE id = ?`, [isDarkMode ? 1 : 0, userId]);
-      } catch (e) {
-        if (e.code !== "ER_BAD_FIELD_ERROR") {
-          console.error("is_dark_mode 업데이트 오류:", e);
-        }
-      }
-    }
-
-    // language 업데이트 시도
-    if (language !== undefined) {
-      try {
-        await db.query(`UPDATE users SET language = ? WHERE id = ?`, [language, userId]);
-      } catch (e) {
-        if (e.code !== "ER_BAD_FIELD_ERROR") {
-          console.error("language 업데이트 오류:", e);
-        }
-      }
-    }
-
-    // updated_at 업데이트 (이 컬럼은 일반적으로 존재함)
-    try {
-      await db.query(`UPDATE users SET updated_at = NOW() WHERE id = ?`, [userId]);
-    } catch (e) {
-      // updated_at이 없어도 무시
-    }
-
-    return res.status(200).json(updatedSettings);
+    return res.status(200).json(updated);
   } catch (error) {
     console.error("updateUserSettings 오류:", error);
     return res.status(500).json({ message: "서버 오류" });
@@ -457,30 +395,37 @@ export const uploadProfileImage = async (req, res) => {
 // 사용자 팔로우
 export const followUser = async (req, res) => {
   try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
     if (!req.user || !req.user.id) {
       return res.status(401).json({ message: "인증이 필요합니다." });
     }
 
     const followerId = Number(req.user.id);
+    // 팔로우할 유저 ID는 body에서 받음, 쿼리로 받는(unfollowUser처럼) 방식 혼돈 우려.
+    // 만약 API 일관성을 원한다면 둘 다 body나 둘 다 query로 수정 권장.
     const { followee_id } = req.body;
 
     if (!followee_id) {
       return res.status(400).json({ message: "팔로우할 사용자 ID가 필요합니다." });
     }
 
-    const followeeId = Number(followee_id);
-    if (Number.isNaN(followeeId) || followeeId <= 0) {
-      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+    if (Number.isNaN(followerId) || followerId <= 0) {
+      return res.status(400).json({ message: "유효한 팔로워 ID가 필요합니다." });
     }
 
-    if (followerId === followeeId) {
+    const followeeIdNum = Number(followee_id);
+    if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
+      return res.status(400).json({ message: "유효한 팔로우 대상 ID가 필요합니다." });
+    }
+
+    if (followerId === followeeIdNum) {
       return res.status(400).json({ message: "자기 자신을 팔로우할 수 없습니다." });
     }
 
     // 사용자 존재 확인
     const [userRows] = await db.query(
       `SELECT id FROM users WHERE id = ?`,
-      [followeeId]
+      [followeeIdNum]
     );
 
     if (!userRows || userRows.length === 0) {
@@ -490,23 +435,18 @@ export const followUser = async (req, res) => {
     // 이미 팔로우 중인지 확인
     const [existingRows] = await db.query(
       `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
-      [followerId, followeeId]
+      [followerId, followeeIdNum]
     );
-
     if (existingRows && existingRows.length > 0) {
-      return res.status(400).json({ message: "이미 팔로우 중인 사용자입니다." });
+      return res.status(400).json({ message: "이미 팔로우 중입니다." });
     }
 
-    // 팔로우 추가
+    // 팔로우 관계 추가
     await db.query(
-      `INSERT INTO user_follows (follower_id, followee_id, created_at) VALUES (?, ?, NOW())`,
-      [followerId, followeeId]
+      `INSERT INTO user_follows (follower_id, followee_id) VALUES (?, ?)`,
+      [followerId, followeeIdNum]
     );
-
-    return res.status(200).json({
-      success: true,
-      message: "팔로우되었습니다.",
-    });
+    return res.status(200).json({ message: "팔로우 성공" });
   } catch (error) {
     console.error("followUser 오류:", error);
     return res.status(500).json({ message: "서버 오류" });
@@ -516,42 +456,47 @@ export const followUser = async (req, res) => {
 // 사용자 팔로우 취소
 export const unfollowUser = async (req, res) => {
   try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
     if (!req.user || !req.user.id) {
       return res.status(401).json({ message: "인증이 필요합니다." });
     }
 
     const followerId = Number(req.user.id);
-    const { followee_id } = req.body;
+    // 팔로우 취소 기능: followeeId는 쿼리 파라미터에서 받음
+    const followeeId = req.query.followeeId;
 
-    if (!followee_id) {
-      return res.status(400).json({ message: "팔로우 취소할 사용자 ID가 필요합니다." });
+    if (Number.isNaN(followerId) || followerId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로워 ID가 필요합니다." });
     }
 
-    const followeeId = Number(followee_id);
-    if (Number.isNaN(followeeId) || followeeId <= 0) {
-      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+    const followeeIdNum = Number(followeeId);
+    if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로잉 대상 ID가 필요합니다." });
     }
 
-    // 팔로우 관계 확인
+    // 팔로우 관계 존재 확인
     const [existingRows] = await db.query(
       `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
-      [followerId, followeeId]
+      [followerId, followeeIdNum]
     );
 
     if (!existingRows || existingRows.length === 0) {
-      return res.status(400).json({ message: "팔로우하지 않은 사용자입니다." });
+      return res
+        .status(400)
+        .json({ message: "팔로우 관계가 존재하지 않습니다." });
     }
 
-    // 팔로우 취소
-    await db.query(
+    // 팔로우 관계 삭제
+    const [result] = await db.query(
       `DELETE FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
-      [followerId, followeeId]
+      [followerId, followeeIdNum]
     );
 
-    return res.status(200).json({
-      success: true,
-      message: "팔로우가 취소되었습니다.",
-    });
+    return res.status(200).json({ message: "언팔로우 성공" });
   } catch (error) {
     console.error("unfollowUser 오류:", error);
     return res.status(500).json({ message: "서버 오류" });
@@ -561,33 +506,39 @@ export const unfollowUser = async (req, res) => {
 // 팔로우 여부 확인
 export const isFollowing = async (req, res) => {
   try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
     if (!req.user || !req.user.id) {
       return res.status(401).json({ message: "인증이 필요합니다." });
     }
 
     const followerId = Number(req.user.id);
-    const { followee_id } = req.query;
+    const followeeId = req.query.followeeId;
 
-    if (!followee_id) {
-      return res.status(400).json({ message: "확인할 사용자 ID가 필요합니다." });
+    if (Number.isNaN(followerId) || followerId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로워 ID가 필요합니다." });
     }
 
-    const followeeId = Number(followee_id);
-    if (Number.isNaN(followeeId) || followeeId <= 0) {
-      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+    const followeeIdNum = Number(followeeId);
+    if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로잉 대상 ID가 필요합니다." });
     }
+
+    // 자기 자신인지 확인
+    const isMine = followerId === followeeIdNum;
 
     // 팔로우 관계 확인
     const [rows] = await db.query(
       `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
-      [followerId, followeeId]
+      [followerId, followeeIdNum]
     );
 
     const isFollowing = rows && rows.length > 0;
 
-    return res.status(200).json({
-      isFollowing: isFollowing,
-    });
+    return res.status(200).json({ isFollowing, isMine });
   } catch (error) {
     console.error("isFollowing 오류:", error);
     return res.status(500).json({ message: "서버 오류" });

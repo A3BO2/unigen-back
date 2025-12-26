@@ -12,6 +12,7 @@ import seniorrouter from "./src/router/seniorRouter.mjs";
 import airouter from "./src/router/aiRouter.mjs";
 import userrouter from "./src/router/userRouter.mjs";
 import storyRouter from "./src/router/storyRouter.mjs";
+import commentRouter from "./src/router/commentRouter.mjs";
 
 dotenv.config();
 
@@ -39,6 +40,7 @@ app.use("/api/v1/senior", seniorrouter);
 app.use("/api/v1/ai", airouter);
 app.use("/api/v1/users", userrouter);
 app.use("/api/v1/stories", storyRouter);
+app.use("/api/v1/comments", commentRouter);
 
 app.get("/", (req, res) => {
   res.send("Senior SNS API Server (Full Version) is running... 🚀");

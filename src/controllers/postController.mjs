@@ -4,6 +4,7 @@ import db from "../config/db.mjs";
 import sharp from "sharp"; // 이미지 처리 라이브러리
 import fs from "fs/promises";
 import path from "path";
+import { uploadToS3 } from "../utils/s3Client.mjs";
 import { getRelativeTime } from "../utils/dateUtils.mjs";
 
 // 영상 용량 압축 모듈
@@ -11,7 +12,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmeginstaller from "@ffmpeg-installer/ffmpeg";
 ffmpeg.setFfmpegPath(ffmeginstaller.path);
 
-// F004: 일반 게시물 작성
+// F004: 일반 피드 작성
 export const createPost = async (req, res) => {
   const connection = await db.getConnection();
 
@@ -52,19 +53,25 @@ export const createPost = async (req, res) => {
     if (postType === "reel") {
       const file = req.files[0];
 
-      // 메모리 스토리지 사용 시 file.buffer를 임시 파일로 저장
-      const uploadDir = path.join(process.cwd(), "uploads");
-      await fs.mkdir(uploadDir, { recursive: true }).catch(() => {}); // 디렉토리가 없으면 생성
+      // 메모리 스토리지 사용 시 file.buffer를 임시 파일로 저장하거나 디스크 스토리지 지원
+      let originalFilePath, compressedFilePath, compressedFilename;
+      if (file.buffer) {
+        // 메모리 스토리지: 버퍼를 임시 파일로 저장
+        const uploadDir = path.join(process.cwd(), "uploads");
+        await fs.mkdir(uploadDir, { recursive: true }).catch(() => {});
+        const originalFilename = `temp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
+        originalFilePath = path.join(uploadDir, originalFilename);
+        await fs.writeFile(originalFilePath, file.buffer);
 
-      const originalFilename = `temp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
-      const originalFilePath = path.join(uploadDir, originalFilename);
-
-      // 메모리 버퍼를 임시 파일로 저장
-      await fs.writeFile(originalFilePath, file.buffer);
-
-      const compressedFilename = `comp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
-      const compressedFilePath = path.join(uploadDir, compressedFilename);
-      savedVideoUrl = `/uploads/${compressedFilename}`;
+        compressedFilename = `comp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
+        compressedFilePath = path.join(uploadDir, compressedFilename);
+      } else {
+        // 디스크 스토리지: 경로와 파일명 활용
+        originalFilePath = file.path;
+        const outputDir = file.destination || path.dirname(originalFilePath);
+        compressedFilename = `comp_${file.filename || Date.now()}.mp4`;
+        compressedFilePath = path.join(outputDir, compressedFilename);
+      }
 
       await new Promise((resolve, reject) => {
         ffmpeg(originalFilePath)
@@ -85,8 +92,13 @@ export const createPost = async (req, res) => {
           .save(compressedFilePath); // 저장 시작
       });
 
-      // 압축 성공 시 원본 삭제
-      await fs.unlink(originalFilePath);
+      // 압축된 파일을 읽어서 s3에 업로드
+      const videoBuffer = await fs.readFile(compressedFilePath);
+      savedVideoUrl = await uploadToS3(
+        videoBuffer,
+        `posts/reels/${compressedFilename}`,
+        "video/mp4"
+      );
 
       await connection.execute("UPDATE posts SET video_url = ? WHERE id = ?", [
         savedVideoUrl,
@@ -98,18 +110,32 @@ export const createPost = async (req, res) => {
     }
     // 일반 피드 처리
     else {
-      // 이미지 반복 처리 - 메모리 스토리지 사용 (file.buffer)
+      // 이미지 반복 처리 (메모리 or 디스크 스토리지 모두 지원)
       const imagePromises = req.files.map(async (file, index) => {
-        // 메모리 버퍼에서 직접 이미지 압축
         const s3FileName = `posts/images/${Date.now()}_${index}.jpg`;
+        let imageBuffer;
 
-        const imageBuffer = await sharp(file.buffer)
-          .resize({ width: 1080 })
-          .jpeg({ quality: 80 })
-          .toBuffer();
+        if (file.buffer) {
+          // 메모리 스토리지: 버퍼에서 압축
+          imageBuffer = await sharp(file.buffer)
+            .resize({ width: 1080 })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+        } else {
+          // 디스크 스토리지: 파일 경로에서 압축
+          imageBuffer = await sharp(file.path)
+            .resize({ width: 1080 })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+        }
 
         // s3 업로드
         const s3Url = await uploadToS3(imageBuffer, s3FileName, "image/jpeg");
+
+        // 파일이 디스크에 있다면 삭제
+        if (file.path) {
+          await fs.unlink(file.path).catch(() => {});
+        }
 
         // db 저장 쿼리
         await connection.execute(
@@ -145,6 +171,66 @@ export const createPost = async (req, res) => {
     res.status(500).json({ message: "서버 오류" });
   } finally {
     connection.release();
+  }
+};
+
+// 피드 수정
+export const updatePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const { content } = req.body;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다" });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    await db.query(
+      "UPDATE posts SET content = ?, updated_at = NOW() WHERE id = ?",
+      [content, postId]
+    );
+    res.status(200).json({ message: "게시물이 수정되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const deletePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return res.status(403).json({ message: "삭제 권한이 없습니다." });
+    }
+
+    await db.query("UPDATE posts SET deleted_at = NOW() WHERE id = ?", [
+      postId,
+    ]);
+
+    res.status(200).json({ message: "게시물이 삭제되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
   }
 };
 
@@ -273,10 +359,10 @@ export const getFeed = async (req, res) => {
     }));
 
     res.status(200).json({
-      items,
+      items: items,
       page,
       size,
-      hasNext,
+      hasNext: hasNext,
     });
   } catch (error) {
     console.error(error);
@@ -659,6 +745,7 @@ export const getSeniorFeed = async (req, res) => {
       id: row.id,
       user: {
         name: row.authorName,
+        authorId: row.authorId,
         avatar: row.authorProfileImageUrl,
       },
       content: row.content,
@@ -671,6 +758,7 @@ export const getSeniorFeed = async (req, res) => {
 
     res.status(200).json(items);
   } catch (error) {
-    console.error("=== getSeniorFeed 에러 ===").json(items);
+    console.error("=== getSeniorFeed 에러 ===");
+    res.status(500).json({ message: "서버 오류" });
   }
 };

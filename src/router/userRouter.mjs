@@ -25,4 +25,8 @@ router.get("/me/settings", verifyToken, getUserSettings);
 // 사용자 설정 업데이트
 router.put("/me/settings", verifyToken, updateUserSettings);
 
+router.post("/follow", verifyToken, followUser);
+router.post("/unfollow", verifyToken, unfollowUser);
+router.get("/isfollowing", verifyToken, isFollowing);
+
 export default router;
