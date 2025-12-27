@@ -6,13 +6,13 @@ import { uploadToS3 } from "../utils/s3Client.mjs";
 
 export const getUserProfile = async (req, res) => {
   try {
-    // 사용자 ID: 인증 토큰(req.user.id)에서 우선 가져오고, 없으면 URL 파라미터(req.params.id)를 사용
+    // 사용자 ID: URL 파라미터(req.params.id)가 있으면 우선 사용, 없으면 인증 토큰(req.user.id) 사용
     // (인증 미들웨어가 `req.user`에 id를 주입해야 함)
     let userId = null;
-    if (req.user && req.user.id) {
-      userId = req.user.id;
-    } else if (req.params && req.params.id) {
+    if (req.params && req.params.id) {
       userId = req.params.id;
+    } else if (req.user && req.user.id) {
+      userId = req.user.id;
     } else {
       return res
         .status(400)

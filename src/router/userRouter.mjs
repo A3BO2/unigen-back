@@ -22,6 +22,10 @@ const router = express.Router();
 // 내 프로필 조회/수정은 인증 필요 (req.user 주입)
 router.get("/me", verifyToken, getUserProfile);
 router.put("/me", verifyToken, updateUserProfile);
+// 검색 라우트는 :id 라우트보다 먼저 정의해야 함
+router.get("/search", verifyToken, searchUsers);
+// 다른 사용자 프로필 조회 (인증 필요)
+router.get("/:id", verifyToken, getUserProfile);
 // 프로필 이미지 업로드 - S3 업로드용 메모리 스토리지 사용
 router.post(
   "/me/profile-image",
@@ -45,6 +49,5 @@ router.delete("/me/following/:followeeId", verifyToken, unfollowUser);
 router.post("/follow", verifyToken, followUser);
 router.post("/unfollow", verifyToken, unfollowUser);
 router.get("/isfollowing", verifyToken, isFollowing);
-router.get("/search", verifyToken, searchUsers);
 
 export default router;
