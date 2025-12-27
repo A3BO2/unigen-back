@@ -538,3 +538,60 @@ export const isFollowing = async (req, res) => {
     return res.status(500).json({ message: "서버 오류" });
   }
 };
+
+// 사용자 검색
+export const searchUsers = async (req, res) => {
+  try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const currentUserId = Number(req.user.id);
+    const query = req.query.q || req.query.query || "";
+
+    if (!query || query.trim().length === 0) {
+      return res.status(200).json({ users: [] });
+    }
+
+    const searchTerm = `%${query.trim()}%`;
+
+    // 사용자명(username) 또는 이름(name)으로 검색
+    // 현재 사용자는 제외
+    const [rows] = await db.query(
+      `SELECT 
+        u.id,
+        u.username,
+        u.name,
+        u.profile_image,
+        (SELECT COUNT(1) FROM user_follows uf WHERE uf.followee_id = u.id) AS follower_count,
+        EXISTS(
+          SELECT 1 FROM user_follows uf 
+          WHERE uf.follower_id = ? AND uf.followee_id = u.id
+        ) AS is_following
+      FROM users u
+      WHERE u.id != ?
+        AND (u.username LIKE ? OR u.name LIKE ?)
+      ORDER BY 
+        CASE WHEN u.username LIKE ? THEN 1 ELSE 2 END,
+        u.username ASC
+      LIMIT 50`,
+      [currentUserId, currentUserId, searchTerm, searchTerm, `%${query.trim()}%`]
+    );
+
+    // 팔로우 여부를 boolean으로 변환
+    const users = rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      name: row.name,
+      profile_image: row.profile_image,
+      follower_count: row.follower_count,
+      is_following: Boolean(row.is_following),
+    }));
+
+    return res.status(200).json({ users });
+  } catch (error) {
+    console.error("searchUsers 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};

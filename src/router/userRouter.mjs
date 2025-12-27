@@ -9,6 +9,7 @@ import {
   isFollowing,
   updateUserProfile,
   uploadProfileImage,
+  searchUsers,
 } from "../controllers/userController.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
 import { uploadToS3 } from "../middleware/uploadMiddleware.mjs";
@@ -19,7 +20,12 @@ const router = express.Router();
 router.get("/me", verifyToken, getUserProfile);
 router.put("/me", verifyToken, updateUserProfile);
 // 프로필 이미지 업로드 - S3 업로드용 메모리 스토리지 사용
-router.post("/me/profile-image", verifyToken, uploadToS3.single("image"), uploadProfileImage);
+router.post(
+  "/me/profile-image",
+  verifyToken,
+  uploadToS3.single("image"),
+  uploadProfileImage
+);
 // 사용자 설정 조회
 router.get("/me/settings", verifyToken, getUserSettings);
 // 사용자 설정 업데이트
@@ -28,5 +34,6 @@ router.put("/me/settings", verifyToken, updateUserSettings);
 router.post("/follow", verifyToken, followUser);
 router.post("/unfollow", verifyToken, unfollowUser);
 router.get("/isfollowing", verifyToken, isFollowing);
+router.get("/search", verifyToken, searchUsers);
 
 export default router;
