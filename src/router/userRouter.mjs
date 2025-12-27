@@ -10,6 +10,9 @@ import {
   updateUserProfile,
   uploadProfileImage,
   searchUsers,
+  getFollowers,
+  getFollowing,
+  removeFollower,
 } from "../controllers/userController.mjs";
 import { verifyToken } from "../middleware/authMiddleware.mjs";
 import { uploadToS3 } from "../middleware/uploadMiddleware.mjs";
@@ -30,6 +33,14 @@ router.post(
 router.get("/me/settings", verifyToken, getUserSettings);
 // 사용자 설정 업데이트
 router.put("/me/settings", verifyToken, updateUserSettings);
+// 팔로워 목록 조회
+router.get("/me/followers", verifyToken, getFollowers);
+// 팔로우 목록 조회
+router.get("/me/following", verifyToken, getFollowing);
+// 팔로워 삭제
+router.delete("/me/followers/:followerId", verifyToken, removeFollower);
+// 팔로우 삭제 (언팔로우)
+router.delete("/me/following/:followeeId", verifyToken, unfollowUser);
 
 router.post("/follow", verifyToken, followUser);
 router.post("/unfollow", verifyToken, unfollowUser);
