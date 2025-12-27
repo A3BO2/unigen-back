@@ -44,5 +44,4 @@ router.get("/:postId/is-liked", verifyToken, isPostLike);
 // 단일 게시물 조회 (동적 라우트는 마지막에 배치)
 router.get("/:id", verifyToken, getPostById);
 
-
 export default router;
