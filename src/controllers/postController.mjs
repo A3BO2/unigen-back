@@ -116,7 +116,6 @@ export const createPost = async (req, res) => {
           .audioBitrate("128k") // 오디오 음질
           .outputOptions("-preset fast") // 속도 우선 (veryfast, fast, medium)
           .on("end", () => {
-            console.log("동영상 압축 완료!");
             resolve();
           })
           .on("error", (err) => {
@@ -319,7 +318,7 @@ export const getFeed = async (req, res) => {
           p.comment_count as commentCount,
           p.created_at as createdAt,
           u.id as authorId,
-          u.name as authorName,
+          u.username as authorName,
           u.profile_image as authorProfileImageUrl
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
@@ -340,7 +339,7 @@ export const getFeed = async (req, res) => {
           p.comment_count as commentCount,
           p.created_at as createdAt,
           u.id as authorId,
-          u.name as authorName,
+          u.username as authorName,
           u.profile_image as authorProfileImageUrl
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
@@ -367,7 +366,7 @@ export const getFeed = async (req, res) => {
           p.comment_count as commentCount,
           p.created_at as createdAt,
           u.id as authorId,
-          u.name as authorName,
+          u.username as authorName,
           u.profile_image as authorProfileImageUrl
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
@@ -396,7 +395,7 @@ export const getFeed = async (req, res) => {
       id: row.id,
       author: {
         id: row.authorId,
-        name: row.authorName,
+        username: row.authorName,
         profileImageUrl: row.authorProfileImageUrl,
       },
       content: row.content,
@@ -422,6 +421,7 @@ export const getFeed = async (req, res) => {
 };
 
 // controllers/reelController.js
+// 모든 사용자의 릴스를 가져옴 (팔로우 여부와 관계없이)
 export const getReel = async (req, res) => {
   try {
     const parsedLastId = Number.parseInt(req.query.lastId, 10);
@@ -447,6 +447,7 @@ export const getReel = async (req, res) => {
       JOIN users u ON p.author_id = u.id   -- 유저 테이블과 연결
       WHERE p.post_type = ?
         AND p.id < ?
+        -- 팔로우 여부로 필터링하지 않음: 모든 사용자의 릴스를 가져옴
       ORDER BY p.id DESC
       LIMIT 1
     `;
@@ -491,7 +492,7 @@ export const getStory = async (req, res) => {
         p.image_url as imageUrl,
         p.created_at as createdAt,
         u.id as authorId,
-        u.name as authorName,
+        u.username as authorName,
         u.profile_image as authorProfileImageUrl
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -506,7 +507,7 @@ export const getStory = async (req, res) => {
         p.image_url as imageUrl,
         p.created_at as createdAt,
         u.id as authorId,
-        u.name as authorName,
+        u.username as authorName,
         u.profile_image as authorProfileImageUrl
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -524,10 +525,10 @@ export const getStory = async (req, res) => {
       if (!acc[authorId]) {
         acc[authorId] = {
           userId: authorId,
-          author: {
-            name: row.authorName,
-            profileImageUrl: row.authorProfileImageUrl,
-          },
+      author: {
+        username: row.authorName,
+        profileImageUrl: row.authorProfileImageUrl,
+      },
           items: [],
         };
       }
@@ -579,7 +580,7 @@ export const getPostById = async (req, res) => {
         p.comment_count as commentCount,
         p.created_at as createdAt,
         u.id as authorId,
-        u.name as authorName,
+        u.username as authorName,
         u.profile_image as authorProfileImageUrl,
         EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
       FROM posts p
@@ -602,7 +603,7 @@ export const getPostById = async (req, res) => {
         c.content as text,
         c.created_at as createdAt,
         u.id as userId,
-        u.name as userName,
+        u.username as userName,
         u.profile_image as userAvatar
       FROM comments c
       INNER JOIN users u ON c.author_id = u.id
@@ -626,7 +627,7 @@ export const getPostById = async (req, res) => {
     const response = {
       id: post.id,
       user: {
-        name: post.authorName,
+        username: post.authorName,
         avatar: post.authorProfileImageUrl,
       },
       content: post.content,
@@ -671,7 +672,7 @@ export const getSeniorFeed = async (req, res) => {
       sql = `
         SELECT 
           p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
-          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
+          u.id as authorId, u.name as authorName, u.username as authorUsername, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
@@ -679,7 +680,7 @@ export const getSeniorFeed = async (req, res) => {
         UNION
         SELECT 
           p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
-          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
+          u.id as authorId, u.name as authorName, u.username as authorUsername, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
@@ -692,7 +693,7 @@ export const getSeniorFeed = async (req, res) => {
       sql = `
         SELECT 
           p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
-          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
+          u.id as authorId, u.name as authorName, u.username as authorUsername, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
@@ -717,7 +718,7 @@ export const getSeniorFeed = async (req, res) => {
     if (postIds.length > 0) {
       const commentsSql = `
         SELECT c.id, c.post_id as postId, c.content as text, c.created_at as createdAt,
-          u.id as userId, u.name as userName, u.profile_image as userAvatar
+          u.id as userId, u.name as userName, u.username as userUsername, u.profile_image as userAvatar
         FROM comments c
         INNER JOIN users u ON c.author_id = u.id
         WHERE c.post_id IN (?) AND c.deleted_at IS NULL
@@ -729,7 +730,12 @@ export const getSeniorFeed = async (req, res) => {
         if (!commentsMap[comment.postId]) commentsMap[comment.postId] = [];
         commentsMap[comment.postId].push({
           id: comment.id,
-          user: { name: comment.userName, avatar: comment.userAvatar },
+          user: { 
+            id: comment.userId,
+            name: comment.userName, 
+            username: comment.userUsername,
+            avatar: comment.userAvatar 
+          },
           text: comment.text,
           // 🔥 [서버 처리] 댓글 시간도 서버에서 계산해서 보냄
           time: getRelativeTime(comment.createdAt),
@@ -742,6 +748,7 @@ export const getSeniorFeed = async (req, res) => {
       id: row.id,
       user: {
         name: row.authorName,
+        username: row.authorUsername,
         authorId: row.authorId,
         avatar: row.authorProfileImageUrl,
       },

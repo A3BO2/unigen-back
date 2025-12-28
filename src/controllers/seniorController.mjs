@@ -404,7 +404,7 @@ export const getCommentsByPost = async (req, res) => {
   try {
     const [comments] = await db.execute(
       `
-      SELECT c.id AS commentId, c.content, c.created_at AS createdAt, u.id AS authorId, u.name AS authorName, u.profile_image AS authorProfileImage
+      SELECT c.id AS commentId, c.content, c.created_at AS createdAt, u.id AS authorId, u.username AS authorName, u.profile_image AS authorProfileImage
       FROM comments c
       JOIN users u ON c.author_id = u.id
       WHERE c.post_id = ? AND c.deleted_at IS NULL

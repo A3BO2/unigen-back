@@ -25,11 +25,6 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
-app.use((req, res, next) => {
-  console.log(`[요청 들어옴] ${req.method} ${req.url}`);
-  console.log("보낸 데이터:", req.body);
-  next();
-});
 
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));

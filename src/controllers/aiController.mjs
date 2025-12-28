@@ -7,7 +7,6 @@ const openai = new OpenAI({
 });
 
 export const refineTextWithAI = async (req, res) => {
-  console.log("=== [1] AI 요청 시작 ==="); // 1번 확인
   try {
     const { text, theme } = req.body;
     const file = req.file;
@@ -22,12 +21,6 @@ export const refineTextWithAI = async (req, res) => {
     else if (req.body.image) {
       imageUrl = req.body.image;
     }
-
-    console.log(
-      `=== [2] 데이터 수신: 텍스트(${
-        text?.length
-      }), 테마(${theme}), 이미지있음(${!!imageUrl}) ===`
-    );
 
     let stylePrompt = "";
     switch (theme) {
@@ -68,7 +61,6 @@ export const refineTextWithAI = async (req, res) => {
 
     // [수정 3] 변환된 imageUrl이 있다면 vision API 사용
     if (imageUrl) {
-      console.log("=== [3] 이미지 처리 중 (Vision API) ===");
       messages[1].content.push({
         type: "image_url",
         image_url: {
@@ -78,8 +70,6 @@ export const refineTextWithAI = async (req, res) => {
       });
     }
 
-    console.log("=== [4] OpenAI에게 질문 전송 중... (기다리세요) ===");
-
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini", // 혹은 gpt-4o
       messages: messages,
@@ -87,9 +77,7 @@ export const refineTextWithAI = async (req, res) => {
       temperature: 0.7,
     });
 
-    console.log("=== [5] OpenAI 응답 도착! ===");
     const refinedText = completion.choices[0].message.content;
-    console.log("=== [6] 결과 반환 ===");
 
     // 클라이언트에 응답 보내기 (원래 코드에 res.json이 빠져있어서 추가했습니다)
     res.status(200).json({

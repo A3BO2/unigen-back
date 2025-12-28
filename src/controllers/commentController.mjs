@@ -23,60 +23,79 @@ export const createComment = async (req, res) => {
     return res.status(400).json({ message: "댓글 내용을 입력해주세요." });
   }
 
-  const connection = await db.getConnection();
+  // 데드락 재시도 로직
+  const maxRetries = 3;
+  let retryCount = 0;
 
-  try {
-    await connection.beginTransaction();
+  while (retryCount < maxRetries) {
+    const connection = await db.getConnection();
 
-    // 게시글 존재 여부 확인
-    const [posts] = await connection.query(
-      "SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL LIMIT 1",
-      [targetPostId]
-    );
+    try {
+      await connection.beginTransaction();
 
-    if (!posts.length) {
+      // 게시글 존재 여부 확인 및 row lock (데드락 방지)
+      const [posts] = await connection.query(
+        "SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE",
+        [targetPostId]
+      );
+
+      if (!posts.length) {
+        await connection.rollback();
+        connection.release();
+        return res
+          .status(404)
+          .json({ message: "게시글을 찾을 수 없거나 삭제되었습니다." });
+      }
+
+      // 댓글 생성 (UTC 시간으로 저장)
+      const [result] = await connection.execute(
+        `
+        INSERT INTO comments 
+        (post_id, author_id, content, like_count, status, created_at)
+        VALUES (?, ?, ?, 0, 'active', UTC_TIMESTAMP())
+        `,
+        [targetPostId, userId, content.trim()]
+      );
+
+      // 게시글 댓글 수 증가
+      await connection.execute(
+        "UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?",
+        [targetPostId]
+      );
+
+      await connection.commit();
+      connection.release();
+
+      return res.status(201).json({
+        message: "댓글이 등록되었습니다.",
+        comment: {
+          id: result.insertId,
+          
+          postId: targetPostId,
+          userId,
+          text: content.trim(),
+          createdAt: new Date(),
+        },
+      });
+    } catch (error) {
       await connection.rollback();
-      return res
-        .status(404)
-        .json({ message: "게시글을 찾을 수 없거나 삭제되었습니다." });
+      connection.release();
+
+      // 데드락 오류인 경우 재시도
+      if (error.code === "ER_LOCK_DEADLOCK" && retryCount < maxRetries - 1) {
+        retryCount++;
+        // 지수 백오프: 50ms, 100ms, 200ms
+        await new Promise((resolve) => setTimeout(resolve, 50 * Math.pow(2, retryCount - 1)));
+        continue;
+      }
+
+      console.error("createComment error:", error);
+      return res.status(500).json({ message: "서버 오류" });
     }
-
-    // 댓글 생성
-    const [result] = await connection.execute(
-      `
-      INSERT INTO comments 
-      (post_id, author_id, content, like_count, status, created_at)
-      VALUES (?, ?, ?, 0, 'active', NOW())
-      `,
-      [targetPostId, userId, content.trim()]
-    );
-
-    // 게시글 댓글 수 증가
-    await connection.execute(
-      "UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?",
-      [targetPostId]
-    );
-
-    await connection.commit();
-
-    return res.status(201).json({
-      message: "댓글이 등록되었습니다.",
-      comment: {
-        id: result.insertId,
-        
-        postId: targetPostId,
-        userId,
-        text: content.trim(),
-        createdAt: new Date(),
-      },
-    });
-  } catch (error) {
-    await connection.rollback();
-    console.error("createComment error:", error);
-    return res.status(500).json({ message: "서버 오류" });
-  } finally {
-    connection.release();
   }
+
+  // 모든 재시도 실패
+  return res.status(500).json({ message: "서버 오류" });
 };
 
 /* =========================
@@ -123,9 +142,9 @@ export const deleteComment = async (req, res) => {
         .json({ message: "본인이 작성한 댓글만 삭제할 수 있습니다." });
     }
 
-    // soft delete
+    // soft delete (UTC 시간으로 저장)
     await connection.execute(
-      "UPDATE comments SET deleted_at = NOW() WHERE id = ?",
+      "UPDATE comments SET deleted_at = UTC_TIMESTAMP() WHERE id = ?",
       [commentId]
     );
 
@@ -193,7 +212,7 @@ export const getCommentsByPost = async (req, res) => {
       time: getRelativeTime(row.createdAt),
       user: {
         id: row.userId,
-        name: row.userName,
+        username: row.userName,
         avatar: row.userAvatar,
       },
     }));

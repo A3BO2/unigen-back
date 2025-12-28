@@ -4,6 +4,7 @@ import db from "../config/db.mjs";
 import bcrypt from "bcryptjs";
 import { getKakaoUserInfo } from "../utils/kakaoClient.mjs";
 import solapi from "solapi";
+import { validateUsername } from "../utils/usernameValidator.mjs";
 
 // 로그인 시 세션 기록 및 last_login_at 업데이트 헬퍼 함수
 const recordLoginSession = async (userId, authMethod, req) => {
@@ -100,7 +101,6 @@ export const sendAuthCode = async (req, res) => {
 
     // SMS 발송
     await sendSMS(cleanPhone, code);
-    console.log(`[TEST] ${cleanPhone} 인증번호: ${code}`); // 테스트용 로그
 
     return res
       .status(200)
@@ -257,6 +257,15 @@ export const signup = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "필수 값 누락",
+      });
+    }
+
+    // 1-1. username 유효성 검사
+    const usernameValidation = validateUsername(username);
+    if (!usernameValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: usernameValidation.message,
       });
     }
 
@@ -556,6 +565,15 @@ export const kakaoSignup = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "username과 phone은 필수입니다.",
+      });
+    }
+
+    // 2-1. username 유효성 검사
+    const usernameValidation = validateUsername(username);
+    if (!usernameValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: usernameValidation.message,
       });
     }
 

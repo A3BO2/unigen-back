@@ -1,6 +1,7 @@
 import db from "../config/db.mjs";
 import { uploadToS3 } from "../utils/s3Client.mjs";
 import path from "path";
+import { getRelativeTime } from "../utils/dateUtils.mjs";
 
 // 스토리 목록 조회
 export const getStories = async (req, res) => {
@@ -15,7 +16,7 @@ export const getStories = async (req, res) => {
         s.user_id AS userId,
         s.media_url AS mediaUrl,
         s.created_at AS createdAt,
-        u.name AS userName,
+        u.username AS userName,
         u.profile_image AS profileImage
       FROM stories s
       LEFT JOIN users u ON u.id = s.user_id
@@ -40,7 +41,7 @@ export const getStories = async (req, res) => {
         grouped.set(row.userId, {
           userId: row.userId,
           author: {
-            name: row.userName || "알 수 없음",
+            username: row.userName || "알 수 없음",
             profileImageUrl: row.profileImage || null,
           },
           items: [],
@@ -50,6 +51,7 @@ export const getStories = async (req, res) => {
         id: row.storyId,
         imageUrl: row.mediaUrl,
         createdAt: row.createdAt,
+        timestamp: getRelativeTime(row.createdAt), // 백엔드에서 시간 처리
       };
       grouped.get(row.userId).items.push(item);
     });
@@ -110,7 +112,7 @@ export const createStory = async (req, res) => {
     const mediaUrl = await uploadToS3(req.file.buffer, s3FileName, contentType);
 
     const sql = `
-        INSERT INTO stories (user_id, media_url, created_at) VALUES (?, ?, NOW())
+        INSERT INTO stories (user_id, media_url, created_at) VALUES (?, ?, UTC_TIMESTAMP())
         `;
 
     const [result] = await connection.execute(sql, [userId, mediaUrl]);
@@ -171,7 +173,7 @@ export const getStoryViewers = async (req, res) => {
     const storyId = req.params.storyId;
 
     const sql = `
-      SELECT u.id AS userId, u.name AS userName, u.profile_image AS profileImage, sv.viewed_at AS viewedAt
+      SELECT u.id AS userId, u.username AS userName, u.profile_image AS profileImage, sv.viewed_at AS viewedAt
       FROM story_views sv
       JOIN users u ON sv.viewer_id = u.id
       WHERE sv.story_id = ? AND u.id != ?
@@ -185,6 +187,7 @@ export const getStoryViewers = async (req, res) => {
         userName: row.userName || "알 수 없음",
         profileImageUrl: row.profileImage || null,
         viewedAt: row.viewedAt,
+        viewedAtTime: getRelativeTime(row.viewedAt),
       })),
     });
   } catch (error) {
