@@ -89,11 +89,15 @@ export const createPost = async (req, res) => {
         // 메모리 스토리지: 버퍼를 임시 파일로 저장
         const uploadDir = path.join(process.cwd(), "uploads");
         await fs.mkdir(uploadDir, { recursive: true }).catch(() => {});
-        const originalFilename = `temp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
+        const originalFilename = `temp_${Date.now()}_${Math.round(
+          Math.random() * 1e9
+        )}.mp4`;
         originalFilePath = path.join(uploadDir, originalFilename);
         await fs.writeFile(originalFilePath, file.buffer);
 
-        compressedFilename = `comp_${Date.now()}_${Math.round(Math.random() * 1e9)}.mp4`;
+        compressedFilename = `comp_${Date.now()}_${Math.round(
+          Math.random() * 1e9
+        )}.mp4`;
         compressedFilePath = path.join(uploadDir, compressedFilename);
       } else {
         // 디스크 스토리지: 경로와 파일명 활용
@@ -277,6 +281,17 @@ export const getFeed = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const size = parseInt(req.query.size) || 10;
     const all = req.query.all || "false";
+
+    // posts 테이블의 모든 튜플의 comment_count 업데이트
+    await db.query(`
+      UPDATE posts p
+      SET comment_count = (
+        SELECT COUNT(*) 
+        FROM comments c 
+        WHERE c.post_id = p.id AND c.deleted_at IS NULL
+      )
+      WHERE p.deleted_at IS NULL
+    `);
 
     const offset = (page - 1) * size;
     const limit = size + 1; // hasNext 확인용으로 하나 더 가져오기
@@ -548,7 +563,9 @@ export const getPostById = async (req, res) => {
     const userId = req.user?.userId;
 
     if (Number.isNaN(postId) || postId <= 0) {
-      return res.status(400).json({ message: "유효한 게시물 ID가 필요합니다." });
+      return res
+        .status(400)
+        .json({ message: "유효한 게시물 ID가 필요합니다." });
     }
 
     // 게시물 조회
