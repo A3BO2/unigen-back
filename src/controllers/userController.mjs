@@ -6,7 +6,9 @@ import { uploadToS3 } from "../utils/s3Client.mjs";
 
 export const getUserProfile = async (req, res) => {
   try {
-    // 사용자 ID: URL 파라미터(req.params.id)가 있으면 우선 사용, 없으면 인증 토큰(req.user.id) 사용
+    // 사용자 ID: URL 파라미터(req.params.id)를 우선 사용, 없으면 인증 토큰(req.user.id) 사용
+    // /me 라우트: req.params.id가 없으므로 req.user.id 사용
+    // /:id 라우트: req.params.id가 있으면 그것을 사용
     // (인증 미들웨어가 `req.user`에 id를 주입해야 함)
     let userId = null;
     if (req.params && req.params.id) {
@@ -461,6 +463,17 @@ export const followUser = async (req, res) => {
       return res.status(404).json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
     }
 
+    // 사용자 존재 확인
+    const [userRows] = await db.query(`SELECT id FROM users WHERE id = ?`, [
+      followeeIdNum,
+    ]);
+
+    if (!userRows || userRows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
+    }
+
     // 이미 팔로우 중인지 확인
     const [existingRows] = await db.query(
       `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
@@ -577,6 +590,18 @@ export const unfollowUser = async (req, res) => {
 
     if (!existingRows || existingRows.length === 0) {
       return res.status(404).json({ message: "팔로우 관계를 찾을 수 없습니다." });
+    }
+
+    // 팔로우 관계 존재 확인
+    const [existingRows] = await db.query(
+      "SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?",
+      [followerId, followeeIdNum]
+    );
+
+    if (!existingRows || existingRows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "팔로우 관계를 찾을 수 없습니다." });
     }
 
     // 팔로우 관계 삭제
