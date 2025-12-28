@@ -4,6 +4,7 @@ import db from "../config/db.mjs";
 import sharp from "sharp"; // 이미지 처리 라이브러리
 import fs from "fs/promises";
 import path from "path";
+import { uploadToS3 } from "../utils/s3Client.mjs";
 import { getRelativeTime } from "../utils/dateUtils.mjs";
 
 // 영상 용량 압축 모듈
@@ -11,7 +12,37 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmeginstaller from "@ffmpeg-installer/ffmpeg";
 ffmpeg.setFfmpegPath(ffmeginstaller.path);
 
-// F004: 일반 게시물 작성
+
+export const createThumbnailAndUpload = async (videoPath) => {
+  const thumbnailName = `thumb_${Date.now()}.jpg`;
+  const localThumbnailPath = path.join("uploads", thumbnailName);
+
+  await new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .screenshots({
+        timestamps: ["00:00:01"],
+        filename: thumbnailName,
+        folder: "uploads",
+        size: "480x?"
+      })
+      .on("end", resolve)
+      .on("error", reject);
+  });
+
+  const thumbBuffer = await fs.readFile(localThumbnailPath);
+
+  const thumbnailUrl = await uploadToS3(
+    thumbBuffer,
+    `posts/reels/thumbnails/${thumbnailName}`,
+    "image/jpeg"
+  );
+
+  await fs.unlink(localThumbnailPath).catch(() => {});
+
+  return thumbnailUrl;
+};
+
+// F004: 일반 피드 작성
 export const createPost = async (req, res) => {
   const connection = await db.getConnection();
 
@@ -52,14 +83,29 @@ export const createPost = async (req, res) => {
     if (postType === "reel") {
       const file = req.files[0];
 
-      // 원본 경로, 압축 후 저장될 경로
-      const originalFilePath = file.path;
-      const compressedFilename = `comp_${file.filename}.mp4`;
-      const compressedFilePath = path.join(
-        file.destination,
-        compressedFilename
-      );
-      savedVideoUrl = `/uploads/${compressedFilename}`;
+      // 메모리 스토리지 사용 시 file.buffer를 임시 파일로 저장하거나 디스크 스토리지 지원
+      let originalFilePath, compressedFilePath, compressedFilename;
+      if (file.buffer) {
+        // 메모리 스토리지: 버퍼를 임시 파일로 저장
+        const uploadDir = path.join(process.cwd(), "uploads");
+        await fs.mkdir(uploadDir, { recursive: true }).catch(() => {});
+        const originalFilename = `temp_${Date.now()}_${Math.round(
+          Math.random() * 1e9
+        )}.mp4`;
+        originalFilePath = path.join(uploadDir, originalFilename);
+        await fs.writeFile(originalFilePath, file.buffer);
+
+        compressedFilename = `comp_${Date.now()}_${Math.round(
+          Math.random() * 1e9
+        )}.mp4`;
+        compressedFilePath = path.join(uploadDir, compressedFilename);
+      } else {
+        // 디스크 스토리지: 경로와 파일명 활용
+        originalFilePath = file.path;
+        const outputDir = file.destination || path.dirname(originalFilePath);
+        compressedFilename = `comp_${file.filename || Date.now()}.mp4`;
+        compressedFilePath = path.join(outputDir, compressedFilename);
+      }
 
       await new Promise((resolve, reject) => {
         ffmpeg(originalFilePath)
@@ -80,41 +126,63 @@ export const createPost = async (req, res) => {
           .save(compressedFilePath); // 저장 시작
       });
 
-      // 압축 성공 시 원본 삭제
-      await fs.unlink(originalFilePath);
+      // 압축된 파일을 읽어서 s3에 업로드
+const videoBuffer = await fs.readFile(compressedFilePath);
+savedVideoUrl = await uploadToS3(
+  videoBuffer,
+  `posts/reels/${compressedFilename}`,
+  "video/mp4"
+);
 
-      await connection.execute("UPDATE posts SET video_url = ? WHERE id = ?", [
-        savedVideoUrl,
-        newPostId,
-      ]);
-      // 썸네일 이미지 있다면 여기서 처리
-    } else {
-      // 이미지 반복 처리
+// ⭐⭐⭐ 여기서 썸네일 생성
+const thumbnailUrl = await createThumbnailAndUpload(compressedFilePath);
+
+// DB 업데이트
+await connection.execute(
+  "UPDATE posts SET video_url = ?, image_url = ? WHERE id = ?",
+  [savedVideoUrl, thumbnailUrl, newPostId]
+);
+
+
+      await fs.unlink(originalFilePath).catch(() => {}); // 압축 성공 시 원본 삭제
+      await fs.unlink(compressedFilePath).catch(() => {}); // 압축본 삭제
+    }
+    // 일반 피드 처리
+    else {
+      // 이미지 반복 처리 (메모리 or 디스크 스토리지 모두 지원)
       const imagePromises = req.files.map(async (file, index) => {
-        // 이미지 압축
-        const originalFilePath = file.path;
-        const optimizedFilename = `opt_${file.filename}`;
-        const optimizedFilePath = path.join(
-          file.destination,
-          optimizedFilename
-        );
-        const dbImageUrl = `/uploads/${optimizedFilename}`;
+        const s3FileName = `posts/images/${Date.now()}_${index}.jpg`;
+        let imageBuffer;
 
-        await sharp(originalFilePath)
-          .resize({ width: 1080 })
-          .jpeg({ quality: 80 })
-          .toFile(optimizedFilePath);
+        if (file.buffer) {
+          // 메모리 스토리지: 버퍼에서 압축
+          imageBuffer = await sharp(file.buffer)
+            .resize({ width: 1080 })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+        } else {
+          // 디스크 스토리지: 파일 경로에서 압축
+          imageBuffer = await sharp(file.path)
+            .resize({ width: 1080 })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+        }
 
-        // 원본 삭제
-        await fs.unlink(originalFilePath);
+        // s3 업로드
+        const s3Url = await uploadToS3(imageBuffer, s3FileName, "image/jpeg");
+
+        // 파일이 디스크에 있다면 삭제
+        if (file.path) {
+          await fs.unlink(file.path).catch(() => {});
+        }
 
         // db 저장 쿼리
         await connection.execute(
           `INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)`,
-          [newPostId, dbImageUrl, index]
+          [newPostId, s3Url, index]
         );
 
-        return dbImageUrl;
+        return s3Url;
       });
 
       savedImageUrls = await Promise.all(imagePromises);
@@ -145,6 +213,66 @@ export const createPost = async (req, res) => {
   }
 };
 
+// 피드 수정
+export const updatePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const { content } = req.body;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다" });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    await db.query(
+      "UPDATE posts SET content = ?, updated_at = NOW() WHERE id = ?",
+      [content, postId]
+    );
+    res.status(200).json({ message: "게시물이 수정되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+export const deletePost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.userId;
+
+    const [rows] = await db.query(
+      "SELECT author_id FROM posts WHERE id = ? AND deleted_at IS NULL",
+      [postId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    if (rows[0].author_id !== userId) {
+      return res.status(403).json({ message: "삭제 권한이 없습니다." });
+    }
+
+    await db.query("UPDATE posts SET deleted_at = NOW() WHERE id = ?", [
+      postId,
+    ]);
+
+    res.status(200).json({ message: "게시물이 삭제되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
 // https://api.seniorsns.com/api/v1/posts/feed?mode=senior&page=1&size=10
 export const getFeed = async (req, res) => {
   try {
@@ -153,6 +281,17 @@ export const getFeed = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const size = parseInt(req.query.size) || 10;
     const all = req.query.all || "false";
+
+    // posts 테이블의 모든 튜플의 comment_count 업데이트
+    await db.query(`
+      UPDATE posts p
+      SET comment_count = (
+        SELECT COUNT(*) 
+        FROM comments c 
+        WHERE c.post_id = p.id AND c.deleted_at IS NULL
+      )
+      WHERE p.deleted_at IS NULL
+    `);
 
     const offset = (page - 1) * size;
     const limit = size + 1; // hasNext 확인용으로 하나 더 가져오기
@@ -267,13 +406,14 @@ export const getFeed = async (req, res) => {
       likeCount: row.likeCount,
       commentCount: row.commentCount,
       createdAt: row.createdAt,
+      timestamp: getRelativeTime(row.createdAt),
     }));
 
     res.status(200).json({
-      items,
+      items: items,
       page,
       size,
-      hasNext,
+      hasNext: hasNext,
     });
   } catch (error) {
     console.error(error);
@@ -395,6 +535,7 @@ export const getStory = async (req, res) => {
         id: row.id,
         imageUrl: row.imageUrl,
         createdAt: row.createdAt,
+        timestamp: getRelativeTime(row.createdAt),
       });
       return acc;
     }, {});
@@ -415,6 +556,95 @@ export const getStory = async (req, res) => {
   }
 };
 
+// 단일 게시물 조회
+export const getPostById = async (req, res) => {
+  try {
+    const postId = parseInt(req.params.id);
+    const userId = req.user?.userId;
+
+    if (Number.isNaN(postId) || postId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 게시물 ID가 필요합니다." });
+    }
+
+    // 게시물 조회
+    const sql = `
+      SELECT 
+        p.id,
+        p.content,
+        p.image_url as imageUrl,
+        p.video_url as videoUrl,
+        p.like_count as likeCount,
+        p.comment_count as commentCount,
+        p.created_at as createdAt,
+        u.id as authorId,
+        u.name as authorName,
+        u.profile_image as authorProfileImageUrl,
+        EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      WHERE p.id = ? AND p.deleted_at IS NULL
+    `;
+
+    const [rows] = await db.query(sql, [userId || 0, postId]);
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "게시물을 찾을 수 없습니다." });
+    }
+
+    const post = rows[0];
+
+    // 댓글 가져오기
+    const commentsSql = `
+      SELECT 
+        c.id,
+        c.content as text,
+        c.created_at as createdAt,
+        u.id as userId,
+        u.name as userName,
+        u.profile_image as userAvatar
+      FROM comments c
+      INNER JOIN users u ON c.author_id = u.id
+      WHERE c.post_id = ? AND c.deleted_at IS NULL
+      ORDER BY c.created_at ASC
+    `;
+
+    const [commentsRows] = await db.query(commentsSql, [postId]);
+
+    const comments = commentsRows.map((comment) => ({
+      id: comment.id,
+      user: {
+        name: comment.userName,
+        avatar: comment.userAvatar,
+      },
+      text: comment.text,
+      time: getRelativeTime(comment.createdAt),
+    }));
+
+    // 응답 데이터 구조
+    const response = {
+      id: post.id,
+      user: {
+        name: post.authorName,
+        avatar: post.authorProfileImageUrl,
+      },
+      content: post.content,
+      photo: post.imageUrl,
+      video: post.videoUrl,
+      likes: post.likeCount,
+      timestamp: getRelativeTime(post.createdAt),
+      liked: Boolean(post.isLiked),
+      comments: comments,
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    console.error("getPostById 에러:", error);
+    res.status(500).json({ message: "서버 오류" });
+  }
+};
+
 export const getSeniorFeed = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -424,13 +654,13 @@ export const getSeniorFeed = async (req, res) => {
     const all = req.query.all || "false";
 
     const offset = (page - 1) * size;
-    const limit = size + 1; // hasNext 확인용으로 하나 더 가져오기
+    const limit = size + 1;
 
     let sql;
     const params = [];
 
+    // 1. SQL 쿼리 구성 (기존 로직 유지)
     if (all === "false") {
-      // UNION으로 본인 게시물 + 팔로우한 사람 게시물
       const modeCondition =
         mode === "senior"
           ? "AND p.is_senior_mode = 1"
@@ -440,147 +670,95 @@ export const getSeniorFeed = async (req, res) => {
 
       sql = `
         SELECT 
-          p.id,
-          p.content,
-          p.image_url as imageUrl,
-          p.like_count as likeCount,
-          p.created_at as createdAt,
-          u.id as authorId,
-          u.name as authorName,
-          u.profile_image as authorProfileImageUrl,
+          p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
+          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
-        WHERE p.deleted_at IS NULL 
-          AND p.post_type = 'feed'
-          AND p.author_id = ?
-          ${modeCondition}
-        
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' AND p.author_id = ? ${modeCondition}
         UNION
-        
         SELECT 
-          p.id,
-          p.content,
-          p.image_url as imageUrl,
-          p.like_count as likeCount,
-          p.created_at as createdAt,
-          u.id as authorId,
-          u.name as authorName,
-          u.profile_image as authorProfileImageUrl,
+          p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
+          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
         INNER JOIN user_follows uf ON uf.follower_id = ? AND uf.followee_id = p.author_id
-        WHERE p.deleted_at IS NULL 
-          AND p.post_type = 'feed'
-          ${modeCondition}
-        
-        ORDER BY createdAt DESC
-        LIMIT ? OFFSET ?
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' ${modeCondition}
+        ORDER BY createdAt DESC LIMIT ? OFFSET ?
       `;
-
       params.push(userId, userId, userId, userId, limit, offset);
     } else {
-      // 팔로우하지 않은 사용자의 게시물 조회
       sql = `
         SELECT 
-          p.id,
-          p.content,
-          p.image_url as imageUrl,
-          p.like_count as likeCount,
-          p.created_at as createdAt,
-          u.id as authorId,
-          u.name as authorName,
-          u.profile_image as authorProfileImageUrl,
+          p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
+          u.id as authorId, u.name as authorName, u.profile_image as authorProfileImageUrl,
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
-        WHERE p.deleted_at IS NULL 
-          AND p.post_type = 'feed'
-          AND p.author_id != ?
-          AND NOT EXISTS (
-            SELECT 1 FROM user_follows uf 
-            WHERE uf.follower_id = ? AND uf.followee_id = p.author_id
-          )
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' AND p.author_id != ?
+        AND NOT EXISTS (SELECT 1 FROM user_follows uf WHERE uf.follower_id = ? AND uf.followee_id = p.author_id)
       `;
-
       params.push(userId, userId, userId);
-
-      if (mode === "senior") {
-        sql += ` AND p.is_senior_mode = ?`;
-        params.push(true);
-      } else if (mode === "normal") {
-        sql += ` AND p.is_senior_mode = ?`;
-        params.push(false);
-      }
-
+      if (mode === "senior")
+        (sql += ` AND p.is_senior_mode = ?`), params.push(true);
+      else if (mode === "normal")
+        (sql += ` AND p.is_senior_mode = ?`), params.push(false);
       sql += ` ORDER BY p.created_at DESC LIMIT ? OFFSET ?`;
       params.push(limit, offset);
     }
 
-    // 구조분해 할당으로 실제 데이터 행만 추출
     const [rows] = await db.query(sql, params);
-
-    // hasNext 확인
-    const hasNext = rows.length > size;
     const posts = rows.slice(0, size);
-
-    // 각 포스트에 대한 댓글 가져오기
     const postIds = posts.map((p) => p.id);
-    let commentsMap = {};
 
+    // 2. 댓글 가져오기
+    let commentsMap = {};
     if (postIds.length > 0) {
       const commentsSql = `
-        SELECT 
-          c.id,
-          c.post_id as postId,
-          c.content as text,
-          c.created_at as createdAt,
-          u.id as userId,
-          u.name as userName,
-          u.profile_image as userAvatar
+        SELECT c.id, c.post_id as postId, c.content as text, c.created_at as createdAt,
+          u.id as userId, u.name as userName, u.profile_image as userAvatar
         FROM comments c
         INNER JOIN users u ON c.author_id = u.id
         WHERE c.post_id IN (?) AND c.deleted_at IS NULL
         ORDER BY c.created_at ASC
       `;
-
       const [commentsRows] = await db.query(commentsSql, [postIds]);
 
-      // 포스트별로 댓글 그룹화
       commentsRows.forEach((comment) => {
-        if (!commentsMap[comment.postId]) {
-          commentsMap[comment.postId] = [];
-        }
+        if (!commentsMap[comment.postId]) commentsMap[comment.postId] = [];
         commentsMap[comment.postId].push({
           id: comment.id,
-          user: {
-            name: comment.userName,
-            avatar: comment.userAvatar,
-          },
+          user: { name: comment.userName, avatar: comment.userAvatar },
           text: comment.text,
+          // 🔥 [서버 처리] 댓글 시간도 서버에서 계산해서 보냄
           time: getRelativeTime(comment.createdAt),
         });
       });
     }
 
-    // 최종 응답 데이터 구조 생성
+    // 3. 최종 데이터 매핑 (서버에서 처리 완료)
     const items = posts.map((row) => ({
       id: row.id,
       user: {
         name: row.authorName,
+        authorId: row.authorId,
         avatar: row.authorProfileImageUrl,
       },
       content: row.content,
       photo: row.imageUrl,
       likes: row.likeCount,
+
+      // 🔥 [서버 처리] 여기서 '방금 전' 같은 완성된 문자열을 보냅니다.
       timestamp: getRelativeTime(row.createdAt),
+
       liked: Boolean(row.isLiked),
       comments: commentsMap[row.id] || [],
     }));
 
     res.status(200).json(items);
   } catch (error) {
-    console.error("=== getSeniorFeed 에러 ===").json(items);
+    console.error("=== getSeniorFeed 에러 ===", error);
+    res.status(500).json({ message: "서버 오류" });
   }
 };

@@ -5,6 +5,29 @@ import bcrypt from "bcryptjs";
 import { getKakaoUserInfo } from "../utils/kakaoClient.mjs";
 import solapi from "solapi";
 
+// 로그인 시 세션 기록 및 last_login_at 업데이트 헬퍼 함수
+const recordLoginSession = async (userId, authMethod, req) => {
+  try {
+    const deviceInfo = req.headers['user-agent'] || 'Unknown';
+    
+    // 1. users 테이블의 last_login_at 업데이트
+    await db.query(
+      "UPDATE users SET last_login_at = NOW() WHERE id = ?",
+      [userId]
+    );
+    
+    // 2. user_sessions 테이블에 세션 정보 추가
+    await db.query(
+      `INSERT INTO user_sessions (user_id, auth_method, started_at, device_info)
+      VALUES (?, ?, NOW(), ?)`,
+      [userId, authMethod, deviceInfo]
+    );
+  } catch (error) {
+    console.error("로그인 세션 기록 실패:", error);
+    // 로그인은 성공했으므로 에러를 throw하지 않고 로그만 남김
+  }
+};
+
 // 인증번호 저장소 (seniorController에서 가져옴)
 export const verificationCodes = new Map();
 
@@ -62,7 +85,18 @@ export const sendAuthCode = async (req, res) => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5분
 
+    // 메모리에 저장 (기존 로직 유지)
     verificationCodes.set(cleanPhone, { code, expiresAt });
+
+    // phone_verifications 테이블에 저장
+    const purpose = type || 'unknown'; // 'signup', 'find_pw', 'senior'
+    const expiresAtDateTime = new Date(expiresAt);
+    
+    await db.query(
+      `INSERT INTO phone_verifications (phone, code, purpose, status, expires_at, created_at)
+      VALUES (?, ?, ?, 'pending', ?, NOW())`,
+      [cleanPhone, code, purpose, expiresAtDateTime]
+    );
 
     // SMS 발송
     await sendSMS(cleanPhone, code);
@@ -102,6 +136,15 @@ export const verifyAuthCode = async (req, res) => {
         .status(400)
         .json({ success: false, message: "인증번호 불일치" });
     }
+
+    // 인증 성공 시 phone_verifications 테이블 업데이트
+    await db.query(
+      `UPDATE phone_verifications 
+      SET status = 'verified', verified_at = NOW() 
+      WHERE phone = ? AND code = ? AND status = 'pending' 
+      ORDER BY created_at DESC LIMIT 1`,
+      [cleanPhone, code]
+    );
 
     return res.status(200).json({ success: true, message: "인증 성공" });
   } catch (err) {
@@ -156,6 +199,15 @@ export const changePassword = async (req, res) => {
           .status(400)
           .json({ message: "인증 정보가 유효하지 않습니다." });
       }
+
+      // 인증 성공 시 phone_verifications 테이블 업데이트
+      await db.query(
+        `UPDATE phone_verifications 
+        SET status = 'verified', verified_at = NOW() 
+        WHERE phone = ? AND code = ? AND status = 'pending' 
+        ORDER BY created_at DESC LIMIT 1`,
+        [cleanPhone, code]
+      );
 
       // 2. 전화번호로 유저 찾기
       const [rows] = await db.query("SELECT id FROM users WHERE phone = ?", [
@@ -332,7 +384,10 @@ export const login = async (req, res) => {
       });
     }
 
-    // 3. JWT 토큰 발급 (env JWT_EXPIRES_SEC 사용)
+    // 3. 로그인 세션 기록 및 last_login_at 업데이트
+    await recordLoginSession(user.id, 'phone', req);
+
+    // 4. JWT 토큰 발급 (env JWT_EXPIRES_SEC 사용)
     const jwtExpires = process.env.JWT_EXPIRES_SEC
       ? parseInt(process.env.JWT_EXPIRES_SEC, 10)
       : "7d";
@@ -340,15 +395,22 @@ export const login = async (req, res) => {
       expiresIn: jwtExpires,
     });
 
-    // 4. Response
+    // 5. Response
+    // 프로필 수정(updateUserProfile)로 변경된 값이 재로그인 시에도 반영되도록
+    // users 테이블의 주요 필드를 그대로 내려준다.
     res.status(200).json({
       success: true,
       message: "로그인 성공",
       data: {
         user: {
           id: user.id,
+          signup_mode: user.signup_mode,
           username: user.username,
           name: user.name,
+          phone: user.phone,
+          profile_image: user.profile_image,
+          preferred_mode: user.preferred_mode,
+          status: user.status,
         },
       },
       token: token,
@@ -440,10 +502,8 @@ export const kakaoLogin = async (req, res) => {
       });
     }
 
-    // 3. last_login_at 업데이트
-    await db.query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [
-      user.id,
-    ]);
+    // 3. 로그인 세션 기록 및 last_login_at 업데이트
+    await recordLoginSession(user.id, 'kakao', req);
 
     // 4. JWT 토큰 발급
     const jwtExpires = process.env.JWT_EXPIRES_SEC
