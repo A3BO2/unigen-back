@@ -496,24 +496,14 @@ export const followUser = async (req, res) => {
       return res.status(404).json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
     }
 
-    // 사용자 존재 확인
-    const [userRows] = await db.query(`SELECT id FROM users WHERE id = ?`, [
-      followeeIdNum,
-    ]);
-
-    if (!userRows || userRows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
-    }
-
     // 이미 팔로우 중인지 확인
     const [existingRows] = await db.query(
       `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
       [followerId, followeeIdNum]
     );
     if (existingRows && existingRows.length > 0) {
-      return res.status(400).json({ message: "이미 팔로우 중입니다." });
+      // 이미 팔로우 중이면 성공으로 처리 (중복 요청 방지)
+      return res.status(200).json({ message: "이미 팔로우 중입니다.", alreadyFollowing: true });
     }
 
     // 팔로우 관계 추가
@@ -625,18 +615,6 @@ export const unfollowUser = async (req, res) => {
       return res.status(404).json({ message: "팔로우 관계를 찾을 수 없습니다." });
     }
 
-    // 팔로우 관계 존재 확인
-    const [existingRows] = await db.query(
-      "SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?",
-      [followerId, followeeIdNum]
-    );
-
-    if (!existingRows || existingRows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "팔로우 관계를 찾을 수 없습니다." });
-    }
-
     // 팔로우 관계 삭제
     const [result] = await db.query(
       "DELETE FROM user_follows WHERE follower_id = ? AND followee_id = ?",
@@ -669,7 +647,13 @@ export const isFollowing = async (req, res) => {
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
         .status(400)
-        .json({ message: "유효한 팔로워 ID가 필요합니다." });
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
+
+    if (!followeeId) {
+      return res
+        .status(400)
+        .json({ message: "팔로잉 대상 ID가 필요합니다." });
     }
 
     const followeeIdNum = Number(followeeId);
