@@ -104,6 +104,78 @@ export const getUserProfile = async (req, res) => {
     return res.status(500).json({ message: "서버 오류" });
   }
 };
+
+// 내 프로필 수정 (이름, 프로필 이미지 등)
+export const updateUserProfile = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const userId = Number(req.user.id);
+    if (Number.isNaN(userId) || userId <= 0) {
+      return res
+        .status(400)
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
+
+    const { name, username, profile_image } = req.body;
+
+    if (!name && !username && !profile_image) {
+      return res.status(400).json({
+        message:
+          "수정할 값이 없습니다. (name, username, profile_image 중 최소 1개)",
+      });
+    }
+
+    const fields = [];
+    const values = [];
+
+    if (name !== undefined) {
+      fields.push("name = ?");
+      values.push(name);
+    }
+    if (username !== undefined) {
+      fields.push("username = ?");
+      values.push(username);
+    }
+    if (profile_image !== undefined) {
+      fields.push("profile_image = ?");
+      values.push(profile_image);
+    }
+
+    values.push(userId);
+
+    const sql = `UPDATE users SET ${fields.join(
+      ", "
+    )}, updated_at = NOW() WHERE id = ?`;
+
+    await db.query(sql, values);
+
+    // 수정된 프로필 다시 조회해서 반환
+    const [rows] = await db.query(
+      `SELECT id, username, name, profile_image, preferred_mode, status, created_at
+       FROM users
+       WHERE id = ?`,
+      [userId]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        user: rows[0],
+      },
+    });
+  } catch (error) {
+    console.error("updateUserProfile 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
 // 사용자 설정 조회 (user_settings 테이블 기반)
 export const getUserSettings = async (req, res) => {
   try {
@@ -276,6 +348,73 @@ export const updateUserSettings = async (req, res) => {
   }
 };
 
+// 프로필 이미지 업로드
+export const uploadProfileImage = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "이미지 파일이 필요합니다." });
+    }
+
+    const userId = Number(req.user.id);
+    const baseURL = process.env.BASE_URL || "http://localhost:3000";
+    const imageUrl = `${baseURL}${req.file.path.replace(/\\/g, "/")}`;
+
+    // DB에 프로필 이미지 URL 업데이트
+    await db.query(
+      `UPDATE users SET profile_image = ?, updated_at = NOW() WHERE id = ?`,
+      [imageUrl, userId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      imageUrl: imageUrl,
+    });
+  } catch (error) {
+    console.error("uploadProfileImage 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 팔로워 목록 조회 (나를 팔로우하는 사람들)
+export const getFollowers = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const sql = `
+      SELECT
+        u.id,
+        u.username,
+        u.name,
+        u.profile_image,
+        uf.created_at as followed_at
+      FROM user_follows uf
+      INNER JOIN users u ON uf.follower_id = u.id
+      WHERE uf.followee_id = ?
+      ORDER BY uf.created_at DESC
+    `;
+
+    const [rows] = await db.query(sql, [userId]);
+
+    res.status(200).json({
+      followers: rows.map((row) => ({
+        id: row.id,
+        username: row.username,
+        name: row.name,
+        profile_image: row.profile_image,
+        followed_at: row.followed_at,
+      })),
+    });
+  } catch (error) {
+    console.error("getFollowers 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 사용자 팔로우
 export const followUser = async (req, res) => {
   try {
     // 인증 미들웨어가 req.user에 id를 주입해야 함
@@ -284,7 +423,8 @@ export const followUser = async (req, res) => {
     }
 
     const followerId = Number(req.user.id);
-    const followeeId = req.query.followeeId;
+    const followeeId =
+      req.body.followeeId || req.body.followee_id || req.query.followeeId;
 
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
@@ -296,13 +436,24 @@ export const followUser = async (req, res) => {
     if (Number.isNaN(followeeIdNum) || followeeIdNum <= 0) {
       return res
         .status(400)
-        .json({ message: "유효한 팔로잉 대상 ID가 필요합니다." });
+        .json({ message: "유효한 팔로우 대상 ID가 필요합니다." });
     }
 
     if (followerId === followeeIdNum) {
       return res
         .status(400)
         .json({ message: "자기 자신을 팔로우할 수 없습니다." });
+    }
+
+    // 사용자 존재 확인
+    const [userRows] = await db.query(`SELECT id FROM users WHERE id = ?`, [
+      followeeIdNum,
+    ]);
+
+    if (!userRows || userRows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
     }
 
     // 이미 팔로우 중인지 확인
@@ -326,6 +477,73 @@ export const followUser = async (req, res) => {
   }
 };
 
+// 팔로우 목록 조회 (내가 팔로우하는 사람들)
+export const getFollowing = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const sql = `
+      SELECT
+        u.id,
+        u.username,
+        u.name,
+        u.profile_image,
+        uf.created_at as followed_at
+      FROM user_follows uf
+      INNER JOIN users u ON uf.followee_id = u.id
+      WHERE uf.follower_id = ?
+      ORDER BY uf.created_at DESC
+    `;
+
+    const [rows] = await db.query(sql, [userId]);
+
+    res.status(200).json({
+      following: rows.map((row) => ({
+        id: row.id,
+        username: row.username,
+        name: row.name,
+        profile_image: row.profile_image,
+        followed_at: row.followed_at,
+      })),
+    });
+  } catch (error) {
+    console.error("getFollowing 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 팔로워 삭제 (나를 팔로우하는 사람 차단)
+export const removeFollower = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const followerId = parseInt(req.params.followerId);
+
+    if (!followerId || isNaN(followerId)) {
+      return res
+        .status(400)
+        .json({ message: "유효한 팔로워 ID가 필요합니다." });
+    }
+
+    // user_follows에서 삭제 (follower_id = 삭제할 사용자, followee_id = 나)
+    const [result] = await db.query(
+      "DELETE FROM user_follows WHERE follower_id = ? AND followee_id = ?",
+      [followerId, userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ message: "팔로워 관계를 찾을 수 없습니다." });
+    }
+
+    res.status(200).json({ message: "팔로워가 삭제되었습니다." });
+  } catch (error) {
+    console.error("removeFollower 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 팔로우 삭제 (내가 팔로우하는 사람 언팔로우)
 export const unfollowUser = async (req, res) => {
   try {
     // 인증 미들웨어가 req.user에 id를 주입해야 함
@@ -336,6 +554,7 @@ export const unfollowUser = async (req, res) => {
     const followerId = Number(req.user.id);
     const followeeId = req.query.followeeId;
 
+    // followerId 및 followeeId 유효성 검사
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
         .status(400)
@@ -347,6 +566,18 @@ export const unfollowUser = async (req, res) => {
       return res
         .status(400)
         .json({ message: "유효한 팔로잉 대상 ID가 필요합니다." });
+    }
+
+    // 팔로우 관계 존재 확인
+    const [existingRows] = await db.query(
+      "SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?",
+      [followerId, followeeIdNum]
+    );
+
+    if (!existingRows || existingRows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "팔로우 관계를 찾을 수 없습니다." });
     }
 
     // 팔로우 관계 삭제
@@ -406,6 +637,69 @@ export const isFollowing = async (req, res) => {
     return res.status(200).json({ isFollowing, isMine });
   } catch (error) {
     console.error("isFollowing 오류:", error);
+    return res.status(500).json({ message: "서버 오류" });
+  }
+};
+
+// 사용자 검색
+export const searchUsers = async (req, res) => {
+  try {
+    // 인증 미들웨어가 req.user에 id를 주입해야 함
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "인증이 필요합니다." });
+    }
+
+    const currentUserId = Number(req.user.id);
+    const query = req.query.q || req.query.query || "";
+
+    if (!query || query.trim().length === 0) {
+      return res.status(200).json({ users: [] });
+    }
+
+    const searchTerm = `%${query.trim()}%`;
+
+    // 사용자명(username) 또는 이름(name)으로 검색
+    // 현재 사용자는 제외
+    const [rows] = await db.query(
+      `SELECT 
+        u.id,
+        u.username,
+        u.name,
+        u.profile_image,
+        (SELECT COUNT(1) FROM user_follows uf WHERE uf.followee_id = u.id) AS follower_count,
+        EXISTS(
+          SELECT 1 FROM user_follows uf 
+          WHERE uf.follower_id = ? AND uf.followee_id = u.id
+        ) AS is_following
+      FROM users u
+      WHERE u.id != ?
+        AND (u.username LIKE ? OR u.name LIKE ?)
+      ORDER BY 
+        CASE WHEN u.username LIKE ? THEN 1 ELSE 2 END,
+        u.username ASC
+      LIMIT 50`,
+      [
+        currentUserId,
+        currentUserId,
+        searchTerm,
+        searchTerm,
+        `%${query.trim()}%`,
+      ]
+    );
+
+    // 팔로우 여부를 boolean으로 변환
+    const users = rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      name: row.name,
+      profile_image: row.profile_image,
+      follower_count: row.follower_count,
+      is_following: Boolean(row.is_following),
+    }));
+
+    return res.status(200).json({ users });
+  } catch (error) {
+    console.error("searchUsers 오류:", error);
     return res.status(500).json({ message: "서버 오류" });
   }
 };
