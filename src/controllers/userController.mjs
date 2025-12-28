@@ -38,23 +38,56 @@ export const getUserProfile = async (req, res) => {
     let offset = (page - 1) * limit;
 
     // 사용자 프로필 (게시물수, 팔로워/팔로잉 수 포함)
-    const profileSql = `
-      SELECT
-        u.id,
-        u.username,
-        u.name,
-        u.profile_image,
-        u.preferred_mode,
-        u.status,
-        u.created_at,
-        (SELECT COUNT(1) FROM posts p WHERE p.author_id = u.id AND p.deleted_at IS NULL) AS post_count,
-        (SELECT COUNT(1) FROM user_follows uf_er WHERE uf_er.followee_id = u.id) AS follower_count,
-        (SELECT COUNT(1) FROM user_follows uf_ing WHERE uf_ing.follower_id = u.id) AS following_count
-      FROM users u
-      WHERE u.id = ?
-    `;
-
-    const [profileRows] = await db.query(profileSql, [userId]);
+    // email 컬럼이 없을 수 있으므로 try-catch로 처리
+    let profileRows;
+    try {
+      // email 컬럼이 있는 경우를 먼저 시도
+      const profileSql = `
+        SELECT
+          u.id,
+          u.username,
+          u.name,
+          u.profile_image,
+          u.preferred_mode,
+          u.status,
+          u.created_at,
+          u.email,
+          u.phone,
+          (SELECT COUNT(1) FROM posts p WHERE p.author_id = u.id AND p.deleted_at IS NULL) AS post_count,
+          (SELECT COUNT(1) FROM user_follows uf_er WHERE uf_er.followee_id = u.id) AS follower_count,
+          (SELECT COUNT(1) FROM user_follows uf_ing WHERE uf_ing.follower_id = u.id) AS following_count
+        FROM users u
+        WHERE u.id = ?
+      `;
+      [profileRows] = await db.query(profileSql, [userId]);
+    } catch (emailError) {
+      // email 컬럼이 없는 경우 email 없이 쿼리 실행
+      if (emailError.code === 'ER_BAD_FIELD_ERROR' && emailError.sqlMessage?.includes('email')) {
+        const profileSql = `
+          SELECT
+            u.id,
+            u.username,
+            u.name,
+            u.profile_image,
+            u.preferred_mode,
+            u.status,
+            u.created_at,
+            u.phone,
+            (SELECT COUNT(1) FROM posts p WHERE p.author_id = u.id AND p.deleted_at IS NULL) AS post_count,
+            (SELECT COUNT(1) FROM user_follows uf_er WHERE uf_er.followee_id = u.id) AS follower_count,
+            (SELECT COUNT(1) FROM user_follows uf_ing WHERE uf_ing.follower_id = u.id) AS following_count
+          FROM users u
+          WHERE u.id = ?
+        `;
+        [profileRows] = await db.query(profileSql, [userId]);
+        // email이 없으므로 null로 설정
+        if (profileRows && profileRows.length > 0) {
+          profileRows[0].email = null;
+        }
+      } else {
+        throw emailError;
+      }
+    }
 
     if (!profileRows || profileRows.length === 0) {
       return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
@@ -463,24 +496,14 @@ export const followUser = async (req, res) => {
       return res.status(404).json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
     }
 
-    // 사용자 존재 확인
-    const [userRows] = await db.query(`SELECT id FROM users WHERE id = ?`, [
-      followeeIdNum,
-    ]);
-
-    if (!userRows || userRows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "팔로우할 사용자를 찾을 수 없습니다." });
-    }
-
     // 이미 팔로우 중인지 확인
     const [existingRows] = await db.query(
       `SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?`,
       [followerId, followeeIdNum]
     );
     if (existingRows && existingRows.length > 0) {
-      return res.status(400).json({ message: "이미 팔로우 중입니다." });
+      // 이미 팔로우 중이면 성공으로 처리 (중복 요청 방지)
+      return res.status(200).json({ message: "이미 팔로우 중입니다.", alreadyFollowing: true });
     }
 
     // 팔로우 관계 추가
@@ -592,18 +615,6 @@ export const unfollowUser = async (req, res) => {
       return res.status(404).json({ message: "팔로우 관계를 찾을 수 없습니다." });
     }
 
-    // 팔로우 관계 존재 확인
-    const [existingRows] = await db.query(
-      "SELECT id FROM user_follows WHERE follower_id = ? AND followee_id = ?",
-      [followerId, followeeIdNum]
-    );
-
-    if (!existingRows || existingRows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "팔로우 관계를 찾을 수 없습니다." });
-    }
-
     // 팔로우 관계 삭제
     const [result] = await db.query(
       "DELETE FROM user_follows WHERE follower_id = ? AND followee_id = ?",
@@ -636,7 +647,13 @@ export const isFollowing = async (req, res) => {
     if (Number.isNaN(followerId) || followerId <= 0) {
       return res
         .status(400)
-        .json({ message: "유효한 팔로워 ID가 필요합니다." });
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
+    }
+
+    if (!followeeId) {
+      return res
+        .status(400)
+        .json({ message: "팔로잉 대상 ID가 필요합니다." });
     }
 
     const followeeIdNum = Number(followeeId);
