@@ -12,6 +12,36 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmeginstaller from "@ffmpeg-installer/ffmpeg";
 ffmpeg.setFfmpegPath(ffmeginstaller.path);
 
+
+export const createThumbnailAndUpload = async (videoPath) => {
+  const thumbnailName = `thumb_${Date.now()}.jpg`;
+  const localThumbnailPath = path.join("uploads", thumbnailName);
+
+  await new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .screenshots({
+        timestamps: ["00:00:01"],
+        filename: thumbnailName,
+        folder: "uploads",
+        size: "480x?"
+      })
+      .on("end", resolve)
+      .on("error", reject);
+  });
+
+  const thumbBuffer = await fs.readFile(localThumbnailPath);
+
+  const thumbnailUrl = await uploadToS3(
+    thumbBuffer,
+    `posts/reels/thumbnails/${thumbnailName}`,
+    "image/jpeg"
+  );
+
+  await fs.unlink(localThumbnailPath).catch(() => {});
+
+  return thumbnailUrl;
+};
+
 // F004: 일반 피드 작성
 export const createPost = async (req, res) => {
   const connection = await db.getConnection();
@@ -97,17 +127,22 @@ export const createPost = async (req, res) => {
       });
 
       // 압축된 파일을 읽어서 s3에 업로드
-      const videoBuffer = await fs.readFile(compressedFilePath);
-      savedVideoUrl = await uploadToS3(
-        videoBuffer,
-        `posts/reels/${compressedFilename}`,
-        "video/mp4"
-      );
+const videoBuffer = await fs.readFile(compressedFilePath);
+savedVideoUrl = await uploadToS3(
+  videoBuffer,
+  `posts/reels/${compressedFilename}`,
+  "video/mp4"
+);
 
-      await connection.execute("UPDATE posts SET video_url = ? WHERE id = ?", [
-        savedVideoUrl,
-        newPostId,
-      ]);
+// ⭐⭐⭐ 여기서 썸네일 생성
+const thumbnailUrl = await createThumbnailAndUpload(compressedFilePath);
+
+// DB 업데이트
+await connection.execute(
+  "UPDATE posts SET video_url = ?, image_url = ? WHERE id = ?",
+  [savedVideoUrl, thumbnailUrl, newPostId]
+);
+
 
       await fs.unlink(originalFilePath).catch(() => {}); // 압축 성공 시 원본 삭제
       await fs.unlink(compressedFilePath).catch(() => {}); // 압축본 삭제
