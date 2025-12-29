@@ -300,12 +300,7 @@ export const getFeed = async (req, res) => {
 
     if (all === "false") {
       // UNION으로 본인 게시물 + 팔로우한 사람 게시물
-      const modeCondition =
-        mode === "senior"
-          ? "AND p.is_senior_mode = 1"
-          : mode === "normal"
-          ? "AND p.is_senior_mode = 0"
-          : "";
+      // is_senior_mode 필터링 제거: 일반 모드와 시니어 모드 게시물 모두 표시
 
       sql = `
         SELECT 
@@ -325,7 +320,6 @@ export const getFeed = async (req, res) => {
         WHERE p.deleted_at IS NULL 
           AND p.post_type = 'feed'
           AND p.author_id = ?
-          ${modeCondition}
         
         UNION
         
@@ -346,7 +340,6 @@ export const getFeed = async (req, res) => {
         INNER JOIN user_follows uf ON uf.follower_id = ? AND uf.followee_id = p.author_id
         WHERE p.deleted_at IS NULL 
           AND p.post_type = 'feed'
-          ${modeCondition}
         
         ORDER BY createdAt DESC
         LIMIT ? OFFSET ?
@@ -355,6 +348,7 @@ export const getFeed = async (req, res) => {
       params.push(userId, userId, limit, offset);
     } else {
       // 모든 게시물 조회
+      // is_senior_mode 필터링 제거: 일반 모드와 시니어 모드 게시물 모두 표시
       sql = `
         SELECT 
           p.id,
@@ -371,17 +365,9 @@ export const getFeed = async (req, res) => {
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
         WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
+        ORDER BY p.created_at DESC LIMIT ? OFFSET ?
       `;
 
-      if (mode === "senior") {
-        sql += ` AND p.is_senior_mode = ?`;
-        params.push(true);
-      } else if (mode === "normal") {
-        sql += ` AND p.is_senior_mode = ?`;
-        params.push(false);
-      }
-
-      sql += ` ORDER BY p.created_at DESC LIMIT ? OFFSET ?`;
       params.push(limit, offset);
     }
 
@@ -660,15 +646,9 @@ export const getSeniorFeed = async (req, res) => {
     let sql;
     const params = [];
 
-    // 1. SQL 쿼리 구성 (기존 로직 유지)
+    // 1. SQL 쿼리 구성
+    // is_senior_mode 필터링 제거: 일반 모드와 시니어 모드 게시물 모두 표시
     if (all === "false") {
-      const modeCondition =
-        mode === "senior"
-          ? "AND p.is_senior_mode = 1"
-          : mode === "normal"
-          ? "AND p.is_senior_mode = 0"
-          : "";
-
       sql = `
         SELECT 
           p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
@@ -676,7 +656,7 @@ export const getSeniorFeed = async (req, res) => {
           EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) as isLiked
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
-        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' AND p.author_id = ? ${modeCondition}
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' AND p.author_id = ?
         UNION
         SELECT 
           p.id, p.content, p.image_url as imageUrl, p.like_count as likeCount, p.created_at as createdAt,
@@ -685,7 +665,7 @@ export const getSeniorFeed = async (req, res) => {
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
         INNER JOIN user_follows uf ON uf.follower_id = ? AND uf.followee_id = p.author_id
-        WHERE p.deleted_at IS NULL AND p.post_type = 'feed' ${modeCondition}
+        WHERE p.deleted_at IS NULL AND p.post_type = 'feed'
         ORDER BY createdAt DESC LIMIT ? OFFSET ?
       `;
       params.push(userId, userId, userId, userId, limit, offset);
@@ -699,14 +679,9 @@ export const getSeniorFeed = async (req, res) => {
         INNER JOIN users u ON p.author_id = u.id
         WHERE p.deleted_at IS NULL AND p.post_type = 'feed' AND p.author_id != ?
         AND NOT EXISTS (SELECT 1 FROM user_follows uf WHERE uf.follower_id = ? AND uf.followee_id = p.author_id)
+        ORDER BY p.created_at DESC LIMIT ? OFFSET ?
       `;
-      params.push(userId, userId, userId);
-      if (mode === "senior")
-        (sql += ` AND p.is_senior_mode = ?`), params.push(true);
-      else if (mode === "normal")
-        (sql += ` AND p.is_senior_mode = ?`), params.push(false);
-      sql += ` ORDER BY p.created_at DESC LIMIT ? OFFSET ?`;
-      params.push(limit, offset);
+      params.push(userId, userId, userId, limit, offset);
     }
 
     const [rows] = await db.query(sql, params);
