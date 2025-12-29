@@ -28,57 +28,57 @@ export const createComment = async (req, res) => {
   let retryCount = 0;
 
   while (retryCount < maxRetries) {
-    const connection = await db.getConnection();
+  const connection = await db.getConnection();
 
-    try {
-      await connection.beginTransaction();
+  try {
+    await connection.beginTransaction();
 
       // 게시글 존재 여부 확인 및 row lock (데드락 방지)
-      const [posts] = await connection.query(
+    const [posts] = await connection.query(
         "SELECT id FROM posts WHERE id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE",
-        [targetPostId]
-      );
+      [targetPostId]
+    );
 
-      if (!posts.length) {
-        await connection.rollback();
+    if (!posts.length) {
+      await connection.rollback();
         connection.release();
-        return res
-          .status(404)
-          .json({ message: "게시글을 찾을 수 없거나 삭제되었습니다." });
-      }
+      return res
+        .status(404)
+        .json({ message: "게시글을 찾을 수 없거나 삭제되었습니다." });
+    }
 
       // 댓글 생성 (UTC 시간으로 저장)
-      const [result] = await connection.execute(
-        `
-        INSERT INTO comments 
-        (post_id, author_id, content, like_count, status, created_at)
+    const [result] = await connection.execute(
+      `
+      INSERT INTO comments 
+      (post_id, author_id, content, like_count, status, created_at)
         VALUES (?, ?, ?, 0, 'active', UTC_TIMESTAMP())
-        `,
-        [targetPostId, userId, content.trim()]
-      );
+      `,
+      [targetPostId, userId, content.trim()]
+    );
 
-      // 게시글 댓글 수 증가
-      await connection.execute(
-        "UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?",
-        [targetPostId]
-      );
+    // 게시글 댓글 수 증가
+    await connection.execute(
+      "UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?",
+      [targetPostId]
+    );
 
-      await connection.commit();
+    await connection.commit();
       connection.release();
 
-      return res.status(201).json({
-        message: "댓글이 등록되었습니다.",
-        comment: {
-          id: result.insertId,
-          
-          postId: targetPostId,
-          userId,
-          text: content.trim(),
-          createdAt: new Date(),
-        },
-      });
-    } catch (error) {
-      await connection.rollback();
+    return res.status(201).json({
+      message: "댓글이 등록되었습니다.",
+      comment: {
+        id: result.insertId,
+        
+        postId: targetPostId,
+        userId,
+        text: content.trim(),
+        createdAt: new Date(),
+      },
+    });
+  } catch (error) {
+    await connection.rollback();
       connection.release();
 
       // 데드락 오류인 경우 재시도
@@ -89,8 +89,8 @@ export const createComment = async (req, res) => {
         continue;
       }
 
-      console.error("createComment error:", error);
-      return res.status(500).json({ message: "서버 오류" });
+    console.error("createComment error:", error);
+    return res.status(500).json({ message: "서버 오류" });
     }
   }
 
