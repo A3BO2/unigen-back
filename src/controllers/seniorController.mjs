@@ -7,14 +7,13 @@ import { verificationCodes } from "./authController.mjs";
 // 로그인 시 세션 기록 및 last_login_at 업데이트 헬퍼 함수
 const recordLoginSession = async (userId, authMethod, req) => {
   try {
-    const deviceInfo = req.headers['user-agent'] || 'Unknown';
-    
+    const deviceInfo = req.headers["user-agent"] || "Unknown";
+
     // 1. users 테이블의 last_login_at 업데이트
-    await db.query(
-      "UPDATE users SET last_login_at = NOW() WHERE id = ?",
-      [userId]
-    );
-    
+    await db.query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [
+      userId,
+    ]);
+
     // 2. user_sessions 테이블에 세션 정보 추가
     await db.query(
       `INSERT INTO user_sessions (user_id, auth_method, started_at, device_info)
@@ -81,7 +80,7 @@ export const seniorPhoneAuth = async (req, res) => {
         user.preferred_mode = "senior";
       }
       // 로그인 세션 기록 및 last_login_at 업데이트
-      await recordLoginSession(user.id, 'phone', req);
+      await recordLoginSession(user.id, "phone", req);
     } else {
       // 신규 사용자 - 가입
       // name이 없으면 전화번호로 임시 이름 생성
@@ -112,7 +111,7 @@ export const seniorPhoneAuth = async (req, res) => {
       ]);
       user = newUsers[0];
       // 신규 가입 후 로그인 세션 기록
-      await recordLoginSession(user.id, 'phone', req);
+      await recordLoginSession(user.id, "phone", req);
     }
 
     // 3. JWT 토큰 발급
@@ -194,7 +193,7 @@ export const seniorKakaoLogin = async (req, res) => {
       user.preferred_mode = "senior";
     }
     // 로그인 세션 기록 및 last_login_at 업데이트
-    await recordLoginSession(user.id, 'kakao', req);
+    await recordLoginSession(user.id, "kakao", req);
 
     // 4. JWT 토큰 발급
     const jwtExpires = process.env.JWT_EXPIRES_SEC
