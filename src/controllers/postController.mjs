@@ -12,7 +12,6 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmeginstaller from "@ffmpeg-installer/ffmpeg";
 ffmpeg.setFfmpegPath(ffmeginstaller.path);
 
-
 export const createThumbnailAndUpload = async (videoPath) => {
   const thumbnailName = `thumb_${Date.now()}.jpg`;
   const localThumbnailPath = path.join("uploads", thumbnailName);
@@ -23,7 +22,7 @@ export const createThumbnailAndUpload = async (videoPath) => {
         timestamps: ["00:00:01"],
         filename: thumbnailName,
         folder: "uploads",
-        size: "480x?"
+        size: "480x?",
       })
       .on("end", resolve)
       .on("error", reject);
@@ -95,6 +94,16 @@ export const createPost = async (req, res) => {
         originalFilePath = path.join(uploadDir, originalFilename);
         await fs.writeFile(originalFilePath, file.buffer);
 
+        // 원본 파일 크기 로그
+        const originalStats = await fs.stat(originalFilePath);
+        console.log(
+          `📹 [동영상 압축] 원본 크기: ${(
+            originalStats.size /
+            1024 /
+            1024
+          ).toFixed(2)}MB`
+        );
+
         compressedFilename = `comp_${Date.now()}_${Math.round(
           Math.random() * 1e9
         )}.mp4`;
@@ -102,6 +111,17 @@ export const createPost = async (req, res) => {
       } else {
         // 디스크 스토리지: 경로와 파일명 활용
         originalFilePath = file.path;
+
+        // 원본 파일 크기 로그
+        const originalStats = await fs.stat(originalFilePath);
+        console.log(
+          `📹 [동영상 압축] 원본 크기: ${(
+            originalStats.size /
+            1024 /
+            1024
+          ).toFixed(2)}MB`
+        );
+
         const outputDir = file.destination || path.dirname(originalFilePath);
         compressedFilename = `comp_${file.filename || Date.now()}.mp4`;
         compressedFilePath = path.join(outputDir, compressedFilename);
@@ -115,33 +135,43 @@ export const createPost = async (req, res) => {
           .audioCodec("aac") // 오디오 코덱
           .audioBitrate("128k") // 오디오 음질
           .outputOptions("-preset fast") // 속도 우선 (veryfast, fast, medium)
-          .on("end", () => {
+          .on("end", async () => {
+            // 압축 후 파일 크기 로그
+            const compressedStats = await fs.stat(compressedFilePath);
+            const compressedSizeMB = (
+              compressedStats.size /
+              1024 /
+              1024
+            ).toFixed(2);
+            console.log(`✅ [동영상 압축] 압축 완료: ${compressedSizeMB}MB`);
             resolve();
           })
           .on("error", (err) => {
-            console.error("동영상 압축 에러:", err);
+            console.error("❌ [동영상 압축] 에러:", err);
             reject(err);
           })
           .save(compressedFilePath); // 저장 시작
       });
 
       // 압축된 파일을 읽어서 s3에 업로드
-const videoBuffer = await fs.readFile(compressedFilePath);
-savedVideoUrl = await uploadToS3(
-  videoBuffer,
-  `posts/reels/${compressedFilename}`,
-  "video/mp4"
-);
+      const videoBuffer = await fs.readFile(compressedFilePath);
+      const uploadSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
+      console.log(`☁️ [S3 업로드] 최종 업로드 크기: ${uploadSizeMB}MB`);
 
-// ⭐⭐⭐ 여기서 썸네일 생성
-const thumbnailUrl = await createThumbnailAndUpload(compressedFilePath);
+      savedVideoUrl = await uploadToS3(
+        videoBuffer,
+        `posts/reels/${compressedFilename}`,
+        "video/mp4"
+      );
 
-// DB 업데이트
-await connection.execute(
-  "UPDATE posts SET video_url = ?, image_url = ? WHERE id = ?",
-  [savedVideoUrl, thumbnailUrl, newPostId]
-);
+      // ⭐⭐⭐ 여기서 썸네일 생성
+      const thumbnailUrl = await createThumbnailAndUpload(compressedFilePath);
 
+      // DB 업데이트
+      await connection.execute(
+        "UPDATE posts SET video_url = ?, image_url = ? WHERE id = ?",
+        [savedVideoUrl, thumbnailUrl, newPostId]
+      );
 
       await fs.unlink(originalFilePath).catch(() => {}); // 압축 성공 시 원본 삭제
       await fs.unlink(compressedFilePath).catch(() => {}); // 압축본 삭제
@@ -511,10 +541,10 @@ export const getStory = async (req, res) => {
       if (!acc[authorId]) {
         acc[authorId] = {
           userId: authorId,
-      author: {
-        username: row.authorName,
-        profileImageUrl: row.authorProfileImageUrl,
-      },
+          author: {
+            username: row.authorName,
+            profileImageUrl: row.authorProfileImageUrl,
+          },
           items: [],
         };
       }
@@ -705,11 +735,11 @@ export const getSeniorFeed = async (req, res) => {
         if (!commentsMap[comment.postId]) commentsMap[comment.postId] = [];
         commentsMap[comment.postId].push({
           id: comment.id,
-          user: { 
+          user: {
             id: comment.userId,
-            name: comment.userName, 
+            name: comment.userName,
             username: comment.userUsername,
-            avatar: comment.userAvatar 
+            avatar: comment.userAvatar,
           },
           text: comment.text,
           // 🔥 [서버 처리] 댓글 시간도 서버에서 계산해서 보냄
