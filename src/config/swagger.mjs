@@ -1,6 +1,8 @@
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
 
+const baseurl = process.env.BASE_URL || "http://localhost:3000";
+
 const options = {
   definition: {
     openapi: "3.0.0",
@@ -14,7 +16,7 @@ const options = {
     },
     servers: [
       {
-        url: "http://localhost:3000",
+        url: baseurl,
         description: "개발 서버",
       },
     ],
