@@ -8,7 +8,7 @@ const openai = new OpenAI({
 
 export const refineTextWithAI = async (req, res) => {
   try {
-    const { text, theme } = req.body;
+    const { text, theme, isReels } = req.body; // isReels 추가
     const file = req.file;
 
     let imageUrl = null;
@@ -78,6 +78,11 @@ export const refineTextWithAI = async (req, res) => {
 당신은 시니어 sns 인플루언서 도우미입니다.
 사용자가 입력한 텍스트(혹은 사진 설명)를 바탕으로
 ${stylePrompt} 게시글 내용을 작성해주세요.
+${
+  isReels
+    ? "릴스용으로 매우 짧고 임팩트 있게 작성해주세요. 본문은 1-2문장, 해시태그 포함 총 60자 이내로 제한해주세요."
+    : ""
+}
 해시태그도 3~5개 추천해주세요.
         `.trim(),
       },
