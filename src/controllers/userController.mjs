@@ -40,7 +40,8 @@ export const getUserProfile = async (req, res) => {
     // post_type 파라미터: 'feed' 또는 'reel' (없으면 전체)
     // SQL injection 방지를 위해 유효한 값만 허용
     const rawPostType = req.query.post_type || null;
-    const postType = (rawPostType === 'feed' || rawPostType === 'reel') ? rawPostType : null;
+    const postType =
+      rawPostType === "feed" || rawPostType === "reel" ? rawPostType : null;
 
     // 사용자 프로필 (게시물수, 팔로워/팔로잉 수 포함)
     // email 컬럼이 없을 수 있으므로 try-catch로 처리
@@ -49,10 +50,11 @@ export const getUserProfile = async (req, res) => {
       // email 컬럼이 있는 경우를 먼저 시도
       // post_type이 지정되면 해당 타입만 카운트, 없으면 전체 카운트
       // SQL injection 방지를 위해 postType은 'feed' 또는 'reel'만 허용
-      const postCountCondition = postType && (postType === 'feed' || postType === 'reel')
-        ? `p.author_id = u.id AND p.deleted_at IS NULL AND p.post_type = '${postType}'`
-        : `p.author_id = u.id AND p.deleted_at IS NULL`;
-      
+      const postCountCondition =
+        postType && (postType === "feed" || postType === "reel")
+          ? `p.author_id = u.id AND p.deleted_at IS NULL AND p.post_type = '${postType}'`
+          : `p.author_id = u.id AND p.deleted_at IS NULL`;
+
       const profileSql = `
         SELECT
           u.id,
@@ -72,16 +74,17 @@ export const getUserProfile = async (req, res) => {
       `;
       [profileRows] = await db.query(profileSql, [userId]);
     } catch (emailError) {
-        // email 컬럼이 없는 경우 email 없이 쿼리 실행
-        if (
-          emailError.code === "ER_BAD_FIELD_ERROR" &&
-          emailError.sqlMessage?.includes("email")
-        ) {
-          const postCountCondition = postType && (postType === 'feed' || postType === 'reel')
+      // email 컬럼이 없는 경우 email 없이 쿼리 실행
+      if (
+        emailError.code === "ER_BAD_FIELD_ERROR" &&
+        emailError.sqlMessage?.includes("email")
+      ) {
+        const postCountCondition =
+          postType && (postType === "feed" || postType === "reel")
             ? `p.author_id = u.id AND p.deleted_at IS NULL AND p.post_type = '${postType}'`
             : `p.author_id = u.id AND p.deleted_at IS NULL`;
-          
-          const profileSql = `
+
+        const profileSql = `
             SELECT
               u.id,
               u.username,
@@ -97,7 +100,7 @@ export const getUserProfile = async (req, res) => {
             FROM users u
             WHERE u.id = ?
           `;
-          [profileRows] = await db.query(profileSql, [userId]);
+        [profileRows] = await db.query(profileSql, [userId]);
         // email이 없으므로 null로 설정
         if (profileRows && profileRows.length > 0) {
           profileRows[0].email = null;
@@ -131,9 +134,9 @@ export const getUserProfile = async (req, res) => {
       ORDER BY created_at DESC
       LIMIT ? OFFSET ?
     `;
-    
+
     // 쿼리 파라미터 준비
-    const queryParams = postType 
+    const queryParams = postType
       ? [userId, postType, limit, offset]
       : [userId, limit, offset];
 
@@ -597,12 +600,14 @@ export const uploadProfileImage = async (req, res) => {
 export const getFollowers = async (req, res) => {
   try {
     // URL 파라미터에 userId가 있으면 그 사용자의 팔로워 목록 조회, 없으면 현재 로그인한 사용자
-    const userId = req.params.userId 
-      ? parseInt(req.params.userId, 10) 
+    const userId = req.params.userId
+      ? parseInt(req.params.userId, 10)
       : req.user.id;
 
     if (Number.isNaN(userId) || userId <= 0) {
-      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+      return res
+        .status(400)
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
     }
 
     const sql = `
@@ -705,12 +710,14 @@ export const followUser = async (req, res) => {
 export const getFollowing = async (req, res) => {
   try {
     // URL 파라미터에 userId가 있으면 그 사용자의 팔로우 목록 조회, 없으면 현재 로그인한 사용자
-    const userId = req.params.userId 
-      ? parseInt(req.params.userId, 10) 
+    const userId = req.params.userId
+      ? parseInt(req.params.userId, 10)
       : req.user.id;
 
     if (Number.isNaN(userId) || userId <= 0) {
-      return res.status(400).json({ message: "유효한 사용자 ID가 필요합니다." });
+      return res
+        .status(400)
+        .json({ message: "유효한 사용자 ID가 필요합니다." });
     }
 
     const sql = `
