@@ -5,6 +5,9 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 
+// Swagger 설정
+import { setupSwagger } from "./src/config/swagger.mjs";
+
 // 각 기능별 라우터 불러오기 (.mjs 필수)
 import authrouter from "./src/router/authRouter.mjs";
 import postrouter from "./src/router/postRouter.mjs";
@@ -28,6 +31,9 @@ app.use(express.json({ limit: "50mb" }));
 
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// Swagger 문서 설정
+setupSwagger(app);
 
 // 라우터 등록
 app.use("/api/v1/auth", authrouter);
