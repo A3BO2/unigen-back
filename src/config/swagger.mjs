@@ -1,9 +1,5 @@
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
-import dotenv from "dotenv";
-dotenv.config();
-
-const baseurl = process.env.BASE_URL || "http://localhost:3000";
 
 const options = {
   definition: {
@@ -18,7 +14,7 @@ const options = {
     },
     servers: [
       {
-        url: baseurl,
+        url: "https://unigensns.duckdns.org/api",
         description: "개발 서버",
       },
     ],
