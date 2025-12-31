@@ -14,7 +14,7 @@ const options = {
     },
     servers: [
       {
-        url: "https://unigensns.duckdns.org/api",
+        url: "https://unigensns.duckdns.org",
         description: "개발 서버",
       },
     ],
