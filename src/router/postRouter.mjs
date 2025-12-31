@@ -335,7 +335,7 @@ router.get("/reels", verifyToken, getReel);
  *                     description: 좋아요 수
  *                   timestamp:
  *                     type: string
- *                     description: 상대적 시간 (예: 2시간 전)
+ *                     description: "상대적 시간 (예: 2시간 전)"
  *                   liked:
  *                     type: boolean
  *                     description: 현재 사용자의 좋아요 여부
@@ -504,7 +504,7 @@ router.get("/:postId/is-liked", verifyToken, isPostLike);
  *                   description: 좋아요 수
  *                 timestamp:
  *                   type: string
- *                   description: 상대적 시간 (예: 2시간 전)
+ *                   description: "상대적 시간 (예: 2시간 전)"
  *                 liked:
  *                   type: boolean
  *                   description: 현재 사용자의 좋아요 여부
