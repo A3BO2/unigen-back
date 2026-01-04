@@ -440,11 +440,10 @@ export const getFeed = async (req, res) => {
 // 모든 사용자의 릴스를 가져옴 (팔로우 여부와 관계없이)
 export const getReel = async (req, res) => {
   try {
-    const parsedLastId = Number.parseInt(req.query.lastId, 10);
-    const lastId =
-      Number.isFinite(parsedLastId) && parsedLastId > 0
-        ? parsedLastId
-        : Number.MAX_SAFE_INTEGER;
+    // 🔥 created_at 커서
+    const lastCreatedAt = req.query.lastCreatedAt
+      ? new Date(req.query.lastCreatedAt)
+      : new Date(); // 최초 요청은 현재 시간
 
     const sql = `
       SELECT 
@@ -457,18 +456,17 @@ export const getReel = async (req, res) => {
         p.created_at, 
         p.like_count, 
         p.comment_count,
-        u.username as authorName,              -- 작성자 이름 추가
-        u.profile_image as authorProfile   -- 작성자 프사 추가
+        u.username AS authorName,
+        u.profile_image AS authorProfile
       FROM posts p
-      JOIN users u ON p.author_id = u.id   -- 유저 테이블과 연결
-      WHERE p.post_type = ?
-        AND p.id < ?
-        -- 팔로우 여부로 필터링하지 않음: 모든 사용자의 릴스를 가져옴
-      ORDER BY p.id DESC
+      JOIN users u ON p.author_id = u.id
+      WHERE p.post_type = 'reel'
+        AND p.created_at < ?
+      ORDER BY p.created_at DESC
       LIMIT 1
     `;
 
-    const [rows] = await db.query(sql, ["reel", lastId]);
+    const [rows] = await db.query(sql, [lastCreatedAt]);
 
     if (!rows.length) {
       return res.status(200).json({
@@ -483,16 +481,18 @@ export const getReel = async (req, res) => {
     res.status(200).json({
       message: "Reel fetched",
       reel,
-      nextCursor: reel.id,
+      nextCursor: reel.created_at, // ✅ 핵심
     });
   } catch (error) {
     console.error("getReel error:", {
       error,
-      lastId: req.query.lastId,
+      lastCreatedAt: req.query.lastCreatedAt,
     });
     res.status(500).json({ message: "Server error" });
   }
 };
+
+  
 
 export const getStory = async (req, res) => {
   try {
