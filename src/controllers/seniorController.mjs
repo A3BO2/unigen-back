@@ -427,11 +427,22 @@ export const likePost = async (req, res) => {
   const postId = req.params.postId;
 
   try {
+    // 먼저 이미 좋아요가 있는지 확인
+    const checkSql = `SELECT id FROM likes WHERE post_id = ? AND user_id = ?`;
+    const [existingLikes] = await db.execute(checkSql, [postId, userId]);
+
+    if (existingLikes.length > 0) {
+      // 이미 좋아요가 있는 경우 성공으로 처리 (중복 요청 방지)
+      return res.status(200).json({ success: true, message: "이미 좋아요가 되어 있습니다." });
+    }
+
+    // 좋아요 추가
     const sql = `INSERT INTO likes (post_id, user_id, created_at)
       VALUES (?, ?, NOW())`;
 
     await db.execute(sql, [postId, userId]);
 
+    // 좋아요 수 업데이트
     const updatesql = `UPDATE posts SET like_count = (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) WHERE posts.id = ?`;
 
     await db.execute(updatesql, [postId]);
@@ -439,6 +450,12 @@ export const likePost = async (req, res) => {
     res.status(200).json({ success: true, message: "게시물 좋아요 완료" });
   } catch (error) {
     console.error("게시물 좋아요 오류:", error);
+    
+    // MySQL 중복 키 에러 처리 (ER_DUP_ENTRY = 1062)
+    if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
+      return res.status(200).json({ success: true, message: "이미 좋아요가 되어 있습니다." });
+    }
+    
     res.status(500).json({ success: false, message: "서버 오류" });
   }
 };
