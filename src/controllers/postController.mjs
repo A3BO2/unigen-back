@@ -440,10 +440,51 @@ export const getFeed = async (req, res) => {
 // 모든 사용자의 릴스를 가져옴 (팔로우 여부와 관계없이)
 export const getReel = async (req, res) => {
   try {
-    // 🔥 created_at 커서
+    const userId = req.user?.userId || null; // 로그인한 사용자 ID (없을 수 있음)
+    const startId = req.query.startId ? parseInt(req.query.startId, 10) : null;
     const lastCreatedAt = req.query.lastCreatedAt
       ? new Date(req.query.lastCreatedAt)
-      : new Date(); // 최초 요청은 현재 시간
+      : null;
+
+    // startId가 있고 lastCreatedAt이 없으면 (첫 요청) 해당 릴스를 먼저 가져오기
+    if (startId && !lastCreatedAt) {
+      const startSql = `
+        SELECT 
+          p.id, 
+          p.author_id, 
+          p.content, 
+          p.image_url, 
+          p.video_url, 
+          p.is_senior_mode, 
+          p.created_at, 
+          p.like_count, 
+          p.comment_count,
+          u.username AS authorName,
+          u.profile_image AS authorProfile,
+          ${userId ? `EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) AS is_liked` : `0 AS is_liked`}
+        FROM posts p
+        JOIN users u ON p.author_id = u.id
+        WHERE p.post_type = 'reel'
+          AND p.id = ?
+          AND p.deleted_at IS NULL
+        LIMIT 1
+      `;
+
+      const [startRows] = await db.query(startSql, userId ? [userId, startId] : [startId]);
+
+      if (startRows.length) {
+        const reel = startRows[0];
+        return res.status(200).json({
+          message: "Reel fetched",
+          reel,
+          nextCursor: reel.created_at, // 다음 요청을 위한 커서
+        });
+      }
+      // startId로 릴스를 찾지 못하면 기존 로직으로 진행
+    }
+
+    // 기존 로직: lastCreatedAt 기준으로 다음 릴스 가져오기
+    const baseCreatedAt = lastCreatedAt || new Date(); // lastCreatedAt이 없으면 현재 시간
 
     const sql = `
       SELECT 
@@ -457,16 +498,18 @@ export const getReel = async (req, res) => {
         p.like_count, 
         p.comment_count,
         u.username AS authorName,
-        u.profile_image AS authorProfile
+        u.profile_image AS authorProfile,
+        ${userId ? `EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = ?) AS is_liked` : `0 AS is_liked`}
       FROM posts p
       JOIN users u ON p.author_id = u.id
       WHERE p.post_type = 'reel'
         AND p.created_at < ?
+        AND p.deleted_at IS NULL
       ORDER BY p.created_at DESC
       LIMIT 1
     `;
 
-    const [rows] = await db.query(sql, [lastCreatedAt]);
+    const [rows] = await db.query(sql, userId ? [userId, baseCreatedAt] : [baseCreatedAt]);
 
     if (!rows.length) {
       return res.status(200).json({
@@ -487,6 +530,7 @@ export const getReel = async (req, res) => {
     console.error("getReel error:", {
       error,
       lastCreatedAt: req.query.lastCreatedAt,
+      startId: req.query.startId,
     });
     res.status(500).json({ message: "Server error" });
   }
